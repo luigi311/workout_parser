@@ -1,3 +1,4 @@
+import enum
 from datetime import date
 
 from pydantic import BaseModel, Field, model_validator
@@ -58,7 +59,6 @@ class WorkoutStep(BaseModel):
     def speed_mph_hi(self) -> float | None:
         return self.speed_mps_hi * 2.23694 if self.speed_mps_hi is not None else None
 
-
     # --- Compute bands w/ fallbacks for gauge UI ---
     def _generate_bands(self) -> "WorkoutStep":
         for attr in ["watts", "percent_watts", "percent_speed", "speed_mps"]:
@@ -108,7 +108,6 @@ class WorkoutStep(BaseModel):
         self._generate_bands()
 
 
-
 class Workout(BaseModel):
     name: str
     workout_date: date | None = None
@@ -118,3 +117,12 @@ class Workout(BaseModel):
     @property
     def total_seconds(self) -> float:
         return sum(s.duration_s for s in self.steps)
+
+    def get_step_at(self, t_s: float) -> tuple[int | None, WorkoutStep | None]:
+        """Returns the WorkoutStep active at time t_s into the workout."""
+        elapsed = 0.0
+        for idx,step in enumerate(self.steps):
+            if elapsed <= t_s < elapsed + step.duration_s:
+                return (idx, step)
+            elapsed += step.duration_s
+        return (None, None)
