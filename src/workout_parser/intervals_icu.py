@@ -131,14 +131,13 @@ def _flatten_icu_steps(steps: list[dict]) -> list[WorkoutStep]:
     return flat
 
 
-def parse_intervals_icu_json(data: dict, fallback_name: str) -> Workout:
+def parse_intervals_icu_json(data: dict, name: str) -> Workout:
     """Parse Intervals.icu exported workout JSON (running/cycling)."""
-    parsed_name = data.get("description") or data.get("name") or fallback_name
 
     steps_in = data.get("steps") or []
     steps = _flatten_icu_steps(steps_in)
 
-    return Workout(name=parsed_name, steps=steps)
+    return Workout(name=name, steps=steps)
 
 
 def parse_intervals_icu_json_file(path: Path) -> Workout:
@@ -146,4 +145,4 @@ def parse_intervals_icu_json_file(path: Path) -> Workout:
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
-    return parse_intervals_icu_json(data, fallback_name=path.stem)
+    return parse_intervals_icu_json(data, name=path.stem)
