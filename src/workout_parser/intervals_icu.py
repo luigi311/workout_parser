@@ -1,4 +1,5 @@
 from __future__ import annotations
+from math import floor
 from os import name
 from workout_parser.models import WorkoutStep, Workout
 
@@ -110,9 +111,9 @@ def _flatten_icu_steps(steps: list[dict]) -> list[WorkoutStep]:
         step = WorkoutStep(
             text=text,
             duration_s=dur,
-            watts_mid=watts_mid,
-            watts_lo=watts_lo,
-            watts_hi=watts_hi,
+            watts_mid=floor(watts_mid) if watts_mid is not None else None,
+            watts_lo=floor(watts_lo) if watts_lo is not None else None,
+            watts_hi=floor(watts_hi) if watts_hi is not None else None,
             speed_mps_mid=speed_mid,
             speed_mps_lo=speed_lo,
             speed_mps_hi=speed_hi,

@@ -1,3 +1,4 @@
+from math import floor
 import enum
 from datetime import date
 
@@ -12,9 +13,9 @@ class WorkoutStep(BaseModel):
     # Absolute targets
 
     # Power targets
-    watts_mid: float | None = None
-    watts_lo: float | None = None
-    watts_hi: float | None = None
+    watts_mid: int | None = None
+    watts_lo: int | None = None
+    watts_hi: int | None = None
 
     # Pace targets
     speed_mps_mid: float | None = None
@@ -61,7 +62,16 @@ class WorkoutStep(BaseModel):
 
     # --- Compute bands w/ fallbacks for gauge UI ---
     def _generate_bands(self) -> "WorkoutStep":
-        for attr in ["watts", "percent_watts", "percent_speed", "speed_mps"]:
+        # For watts use floor to round down to nearest integer (since watts are typically integers and this avoids weird fractional watt targets)
+        if self.watts_mid is not None and (self.watts_lo is None or self.watts_hi is None):
+            mid_val = self.watts_mid
+            self.watts_lo = floor(mid_val * 0.95) if self.watts_lo is None else self.watts_lo
+            self.watts_hi = floor(mid_val * 1.05) if self.watts_hi is None else self.watts_hi
+        elif self.watts_lo is not None and self.watts_hi is not None and self.watts_mid is None:
+            self.watts_mid = floor(0.5 * (self.watts_lo + self.watts_hi))
+
+        # For pace targets use regular float math for the bands
+        for attr in ["percent_speed", "speed_mps", "percent_watts"]:
             mid_val = getattr(self, f"{attr}_mid")
             lo_val = getattr(self, f"{attr}_lo")
             hi_val = getattr(self, f"{attr}_hi")
@@ -71,7 +81,7 @@ class WorkoutStep(BaseModel):
                 setattr(self, f"{attr}_hi", mid_val * 1.05)
             elif lo_val is not None and hi_val is not None and mid_val is None:
                 setattr(self, f"{attr}_mid", 0.5 * (lo_val + hi_val))
-
+            
         return self
 
     @model_validator(mode="after")
@@ -82,11 +92,11 @@ class WorkoutStep(BaseModel):
     def generate_absolute_power_targets_from_percent(self, ftp_watts: int) -> None:
         """Generate absolute power targets from %FTP."""
         if self.percent_watts_mid is not None:
-            self.watts_mid = float(ftp_watts) * float(self.percent_watts_mid) / 100.0
+            self.watts_mid = floor(float(ftp_watts) * float(self.percent_watts_mid) / 100.0)
         if self.percent_watts_lo is not None:
-            self.watts_lo = float(ftp_watts) * float(self.percent_watts_lo) / 100.0
+            self.watts_lo = floor(float(ftp_watts) * float(self.percent_watts_lo) / 100.0)
         if self.percent_watts_hi is not None:
-            self.watts_hi = float(ftp_watts) * float(self.percent_watts_hi) / 100.0
+            self.watts_hi = floor(float(ftp_watts) * float(self.percent_watts_hi) / 100.0)
 
         self._generate_bands()
 

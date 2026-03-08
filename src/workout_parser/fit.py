@@ -1,3 +1,4 @@
+from math import floor
 from workout_parser.models import Workout, WorkoutStep
 from pathlib import Path
 from fitparse import FitFile
@@ -157,9 +158,9 @@ def parse_fit(path: Path) -> Workout:
         # ---------- build step (prefer power, then pace; else duration-only) ----------
         step = WorkoutStep(
             duration_s=duration_s,
-            watts_mid=watts_mid,
-            watts_lo=watts_lo,
-            watts_hi=watts_hi,
+            watts_mid=floor(watts_mid) if watts_mid is not None else None,
+            watts_lo=floor(watts_lo) if watts_lo is not None else None,
+            watts_hi=floor(watts_hi) if watts_hi is not None else None,
             percent_watts_mid=percent_watts_mid,
             percent_watts_lo=percent_watts_lo,
             percent_watts_hi=percent_watts_hi,
