@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fitparse>=1.2.0",
+    "pydantic>=2.12.5",
 ]
 
 [dependency-groups]
