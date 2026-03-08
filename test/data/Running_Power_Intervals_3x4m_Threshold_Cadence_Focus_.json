@@ -1,0 +1,162 @@
+{
+  "duration": 2280,
+  "distance": 0.0,
+  "ftp": 165,
+  "lthr": 172,
+  "threshold_pace": 1.8583603,
+  "pace_units": "MINS_MILE",
+  "sportSettings": {
+    "id": 1630886,
+    "athlete_id": "i389547",
+    "types": ["Run", "VirtualRun", "TrailRun"],
+    "warmup_time": 300,
+    "cooldown_time": 300,
+    "ftp": 165,
+    "power_zones": [80, 90, 100, 115, 999],
+    "sweet_spot_min": 84,
+    "sweet_spot_max": 97,
+    "power_spike_threshold": 30,
+    "power_zone_names": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5"],
+    "ftp_est_min_secs": 300,
+    "use_laps_for_power_intervals": false,
+    "keep_all_laps_for_power_intervals": true,
+    "power_intervals_start_locked": false,
+    "lthr": 172,
+    "max_hr": 202,
+    "hr_zones": [145, 153, 162, 171, 202],
+    "hr_zone_names": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5"],
+    "hr_load_type": "HRSS",
+    "hrrc_min_percent": 100.0,
+    "threshold_pace": 1.8583603,
+    "pace_units": "MINS_MILE",
+    "pace_zones": [80.0, 90.0, 95.0, 100.0, 999.0],
+    "pace_zone_names": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5"],
+    "pace_load_type": "RUN",
+    "gap_model": "STRAVA_RUN",
+    "elevation_correction": "AUTO",
+    "use_gap_zone_times": true,
+    "best_effort_distances": [
+      400.0, 800.0, 1500.0, 1609.34, 3000.0, 5000.0, 10000.0, 21097.5, 42195.0
+    ],
+    "pace_curve_start": 228.59999,
+    "load_order": "POWER_PACE_HR",
+    "tiz_order": "HR_POWER_PACE",
+    "workout_order": "POWER_PACE_HR",
+    "interval_display": "POWER_PACE_HR",
+    "extract_workouts": false,
+    "show_pauses": 600,
+    "ignore_velocity": false,
+    "update_activity_name_from_workout": true,
+    "activity_field_ids": [],
+    "activity_charts": {},
+    "custom_field_ids": [],
+    "custom_field_values": {},
+    "custom_zones_ids": [],
+    "other": false,
+    "eFTPSupported": true,
+    "use_distance_for_intervals": false
+  },
+  "target": "POWER",
+  "steps": [
+    {
+      "duration": 600,
+      "power": { "value": 60, "units": "%ftp" },
+      "_power": { "value": 99.0, "start": 96.0, "end": 102.0 }
+    },
+    {
+      "text": "3x",
+      "duration": 1080,
+      "distance": 0.0,
+      "reps": 3,
+      "steps": [
+        {
+          "duration": 240,
+          "power": { "value": 100, "units": "%ftp" },
+          "_power": { "value": 165.0, "start": 160.0, "end": 170.0 }
+        },
+        {
+          "duration": 120,
+          "power": { "value": 60, "units": "%ftp" },
+          "_power": { "value": 99.0, "start": 96.0, "end": 102.0 }
+        }
+      ]
+    },
+    {
+      "duration": 600,
+      "power": { "value": 60, "units": "%ftp" },
+      "_power": { "value": 99.0, "start": 96.0, "end": 102.0 }
+    }
+  ],
+  "zoneTimes": [
+    {
+      "id": "Z1",
+      "zone": 1,
+      "name": "Z1",
+      "color": "#009e80",
+      "max": 80,
+      "minWatts": 1,
+      "maxWatts": 132,
+      "percentRange": "0% - 80%",
+      "secs": 1560
+    },
+    {
+      "id": "Z2",
+      "zone": 2,
+      "name": "Z2",
+      "color": "#009e00",
+      "max": 90,
+      "minWatts": 133,
+      "maxWatts": 148,
+      "percentRange": "81% - 90%",
+      "secs": 0
+    },
+    {
+      "id": "Z3",
+      "zone": 3,
+      "name": "Z3",
+      "color": "#ffcb0e",
+      "max": 100,
+      "minWatts": 149,
+      "maxWatts": 165,
+      "percentRange": "91% - 100%",
+      "secs": 720
+    },
+    {
+      "id": "Z4",
+      "zone": 4,
+      "name": "Z4",
+      "color": "#ff7f0e",
+      "max": 115,
+      "minWatts": 166,
+      "maxWatts": 189,
+      "percentRange": "101% - 115%",
+      "secs": 0
+    },
+    {
+      "id": "Z5",
+      "zone": 5,
+      "name": "Z5",
+      "color": "#dd0447",
+      "max": 999,
+      "minWatts": 190,
+      "maxWatts": 9999,
+      "percentRange": "116% +",
+      "secs": 0
+    },
+    {
+      "id": "SS",
+      "zone": 6,
+      "name": "Sweet Spot",
+      "color": "#ffa00e",
+      "gap": true,
+      "min": 84,
+      "minWatts": 138,
+      "max": 97,
+      "maxWatts": 160,
+      "percentRange": "84% - 97%",
+      "secs": 0
+    }
+  ],
+  "options": {},
+  "locales": []
+}
