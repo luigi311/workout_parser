@@ -1,0 +1,156 @@
+{
+    "id": 101700755,
+    "start_date_local": "2026-04-07T08:00:00",
+    "icu_training_load": 81,
+    "icu_atl": 43.38638,
+    "icu_ctl": 27.015354,
+    "type": "Run",
+    "carbs_used": null,
+    "ss_p_max": null,
+    "ss_w_prime": null,
+    "ss_cp": null,
+    "calendar_id": 1,
+    "uid": "6a87a9c2-ac39-421e-bb5d-d4f230cb3e08",
+    "athlete_id": "i389547",
+    "category": "WORKOUT",
+    "end_date_local": "2026-04-07T09:10:00",
+    "name": "30-Minute Threshold Test (New Build Phase)",
+    "description": "- 30m ramp 50-90% pace 30-min progressive ramp warmup (Shin-Safe)\n- 5m 70% pace Priming strides / Easy prep\n- 30m 100% pace 30-Minute Threshold Test (Max Effort)\n- 10m ramp 70-50% pace Cooldown ramp\n\n30-minute all-out effort to establish new thresholds for the build phase.\n\nA 30-minute 'best effort' test to find your new Threshold Pace and Heart Rate for the Build Phase. Follow the 10-minute 'lap' instruction for accurate data.",
+    "indoor": null,
+    "color": null,
+    "moving_time": 4500,
+    "icu_ftp": null,
+    "w_prime": null,
+    "p_max": null,
+    "atl_days": null,
+    "ctl_days": null,
+    "updated": "2026-04-06T08:31:57.708+00:00",
+    "not_on_fitness_chart": false,
+    "show_as_note": false,
+    "show_on_ctl_line": false,
+    "for_week": false,
+    "target": null,
+    "joules": null,
+    "joules_above_ftp": null,
+    "workout_doc": {
+        "duration": 4500,
+        "distance": 6745.8477,
+        "ftp": 165,
+        "lthr": 172,
+        "threshold_pace": 1.8583603,
+        "pace_units": "MINS_MILE",
+        "target": "PACE",
+        "steps": [
+            {
+                "duration": 1800,
+                "ramp": true,
+                "pace": {
+                    "start": 50,
+                    "end": 90,
+                    "units": "%pace"
+                },
+                "_pace": {
+                    "value": 1.3008521795272827,
+                    "start": 0.9291801452636719,
+                    "end": 1.6725242137908936
+                },
+                "_distance": 2341.534
+            },
+            {
+                "duration": 300,
+                "pace": {
+                    "value": 70,
+                    "units": "%pace"
+                },
+                "_pace": {
+                    "value": 1.3008521795272827,
+                    "start": 1.2683308750391007,
+                    "end": 1.3333734840154647
+                },
+                "_distance": 390.25565
+            },
+            {
+                "duration": 1800,
+                "pace": {
+                    "value": 100,
+                    "units": "%pace"
+                },
+                "_pace": {
+                    "value": 1.8583602905273438,
+                    "start": 1.8119012832641601,
+                    "end": 1.9048192977905274
+                },
+                "_distance": 3345.0486
+            },
+            {
+                "duration": 600,
+                "ramp": true,
+                "pace": {
+                    "start": 70,
+                    "end": 50,
+                    "units": "%pace"
+                },
+                "_pace": {
+                    "value": 1.1150161623954773,
+                    "start": 1.3008521795272827,
+                    "end": 0.9291801452636719
+                },
+                "_distance": 669.0097
+            }
+        ],
+        "zoneTimes": [
+            {
+                "id": "Z1",
+                "secs": 2700
+            },
+            {
+                "id": "Z2",
+                "secs": 0
+            },
+            {
+                "id": "Z3",
+                "secs": 0
+            },
+            {
+                "id": "Z4",
+                "secs": 1800
+            },
+            {
+                "id": "Z5",
+                "secs": 0
+            }
+        ],
+        "options": {},
+        "locales": []
+    },
+    "push_errors": null,
+    "athlete_cannot_edit": false,
+    "hide_from_athlete": false,
+    "structure_read_only": false,
+    "created_by_id": "i389547",
+    "shared_event_id": null,
+    "entered": false,
+    "carbs_per_hour": null,
+    "sub_type": null,
+    "distance": 6745.8477,
+    "tags": null,
+    "attachments": null,
+    "oauth_client_id": 211,
+    "external_id": null,
+    "load_target": null,
+    "time_target": null,
+    "distance_target": null,
+    "training_availability": "NORMAL",
+    "max_training_time": null,
+    "can_train_sports": null,
+    "plan_athlete_id": null,
+    "plan_folder_id": null,
+    "plan_workout_id": null,
+    "plan_applied": null,
+    "icu_intensity": 80.49844,
+    "strain_score": null,
+    "plan_name": null,
+    "workout_filename": "30_Minute_Threshold_Test_New_Build_Phase_.fit",
+    "workout_file_base64": "DiC4UuEAAAAuRklUMJ9AAAEAAAUBAoQAAQACAoQIDgcDBIwAAP8FAAFJbnRlcnZhbHMuaWN1AAYP1JNAAAEAGgMEAQAIKwcGAoQAATMwLU1pbnV0ZSBUaHJlc2hvbGQgVGVzdCAoTmV3IEJ1aWxkIFBoYXNlKQAABEAAAQAbCAEBAAIEhgMBAAUEhgYEhgQEhgcBAP4ChAAAABt3QAAAAAOhAAAGiQAAAAAFAAAAAAAEk+AAAAAE9AAABTUAAAAABQABAAAAG3dAAAAABxQAAAdxAAAAAAUAAgAAAAknwAAAAAOhAAAFFQAAAAAFAAM1KQ==",
+    "paired_activity_id": "i137996153"
+}

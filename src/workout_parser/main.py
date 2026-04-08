@@ -1,6 +1,6 @@
 from datetime import date
 from workout_parser.intervals_icu import parse_intervals_icu_json_file
-from workout_parser.fit import parse_fit
+from workout_parser.fit import parse_fit_from_file
 from workout_parser.models import Workout
 from pathlib import Path
 import re
@@ -60,10 +60,11 @@ def pretty_workout_name(raw: str) -> str:
             out.append(w[:1].upper() + w[1:])
     return " ".join(out)
 
+
 def load_workout(path: Path) -> Workout:
     ext = path.suffix.lower()
     if ext == ".fit":
-        return parse_fit(path)
+        return parse_fit_from_file(path)
     if ext == ".json":
         return parse_intervals_icu_json_file(path)
     return Workout(name=path.stem, steps=[])

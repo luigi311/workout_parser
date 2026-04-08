@@ -12,6 +12,7 @@ def _coerce_float(v, default: float | None = None) -> float | None:
     except Exception:
         return default
 
+
 def _first_non_none(d: dict, *keys):
     for k in keys:
         if k is None:
@@ -20,15 +21,28 @@ def _first_non_none(d: dict, *keys):
             return d[k]
     return None
 
-def parse_fit(path: Path) -> Workout:
+
+def parse_fit_from_bytes(data: bytes, name: str = "Unnamed Workout") -> Workout:
+    """
+    Parse Intervals.icu-style FIT workouts from raw bytes, including pace/power and repeat blocks.
+    """
+    from io import BytesIO
+
+    ff = FitFile(BytesIO(data))
+
+    return parse_fit(ff, name=name)
+
+
+def parse_fit_from_file(path: Path) -> Workout:
     """
     Parse Intervals.icu-style FIT workouts including pace/power and repeat blocks.
     """
-
-    name = path.stem
     ff = FitFile(str(path))
+    return parse_fit(ff, name=path.stem)
 
 
+def parse_fit(ff: FitFile, name: str = "Unnamed Workout") -> Workout:
+    """Parse Intervals.icu-style FIT workouts including pace/power and repeat blocks."""
     # ---------- first pass: collect steps & repeat markers ----------
     entries: list[dict] = []
     for msg in ff.get_messages("workout_step"):
@@ -51,7 +65,7 @@ def parse_fit(path: Path) -> Workout:
             try:
                 duration_step = fields.get("duration_step")
                 repeat_steps = fields.get("repeat_steps")
-                
+
                 if duration_step is None or repeat_steps is None:
                     continue
 
@@ -59,7 +73,7 @@ def parse_fit(path: Path) -> Workout:
                 reps = int(repeat_steps)
             except Exception:
                 continue
-            
+
             entries.append(
                 {
                     "type": "repeat",
@@ -97,13 +111,17 @@ def parse_fit(path: Path) -> Workout:
                 "custom_target_speed_low",
                 "target_speed_low",
                 # some files abuse generic value fields; allow if labeled as pace/speed
-                "custom_target_value_low" if ("pace" in tgt_type or "speed" in tgt_type) else None,
+                "custom_target_value_low"
+                if ("pace" in tgt_type or "speed" in tgt_type)
+                else None,
             )
             hi_raw = _first_non_none(
                 fields,
                 "custom_target_speed_high",
                 "target_speed_high",
-                "custom_target_value_high" if ("pace" in tgt_type or "speed" in tgt_type) else None,
+                "custom_target_value_high"
+                if ("pace" in tgt_type or "speed" in tgt_type)
+                else None,
             )
             mid_raw = fields.get("target_value")
 
@@ -134,7 +152,7 @@ def parse_fit(path: Path) -> Workout:
             lo_f = _coerce_float(lo_raw)
             hi_f = _coerce_float(hi_raw)
             mid_f = _coerce_float(mid_raw)
-            
+
             # Based on the fit spec
             # Values < 1000 are percentage of ftp based
             # Values > 1000 are absolute watts shifted by 1000
