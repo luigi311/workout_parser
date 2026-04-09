@@ -1,5 +1,4 @@
 from math import floor
-import enum
 from datetime import date
 
 from pydantic import BaseModel, Field, model_validator
@@ -63,11 +62,21 @@ class WorkoutStep(BaseModel):
     # --- Compute bands w/ fallbacks for gauge UI ---
     def _generate_bands(self) -> "WorkoutStep":
         # For watts use floor to round down to nearest integer (since watts are typically integers and this avoids weird fractional watt targets)
-        if self.watts_mid is not None and (self.watts_lo is None or self.watts_hi is None):
+        if self.watts_mid is not None and (
+            self.watts_lo is None or self.watts_hi is None
+        ):
             mid_val = self.watts_mid
-            self.watts_lo = floor(mid_val * 0.95) if self.watts_lo is None else self.watts_lo
-            self.watts_hi = floor(mid_val * 1.05) if self.watts_hi is None else self.watts_hi
-        elif self.watts_lo is not None and self.watts_hi is not None and self.watts_mid is None:
+            self.watts_lo = (
+                floor(mid_val * 0.95) if self.watts_lo is None else self.watts_lo
+            )
+            self.watts_hi = (
+                floor(mid_val * 1.05) if self.watts_hi is None else self.watts_hi
+            )
+        elif (
+            self.watts_lo is not None
+            and self.watts_hi is not None
+            and self.watts_mid is None
+        ):
             self.watts_mid = floor(0.5 * (self.watts_lo + self.watts_hi))
 
         # For pace targets use regular float math for the bands
@@ -81,7 +90,7 @@ class WorkoutStep(BaseModel):
                 setattr(self, f"{attr}_hi", mid_val * 1.05)
             elif lo_val is not None and hi_val is not None and mid_val is None:
                 setattr(self, f"{attr}_mid", 0.5 * (lo_val + hi_val))
-            
+
         return self
 
     @model_validator(mode="after")
@@ -92,11 +101,17 @@ class WorkoutStep(BaseModel):
     def generate_absolute_power_targets_from_percent(self, ftp_watts: int) -> None:
         """Generate absolute power targets from %FTP."""
         if self.percent_watts_mid is not None:
-            self.watts_mid = floor(float(ftp_watts) * float(self.percent_watts_mid) / 100.0)
+            self.watts_mid = floor(
+                float(ftp_watts) * float(self.percent_watts_mid) / 100.0
+            )
         if self.percent_watts_lo is not None:
-            self.watts_lo = floor(float(ftp_watts) * float(self.percent_watts_lo) / 100.0)
+            self.watts_lo = floor(
+                float(ftp_watts) * float(self.percent_watts_lo) / 100.0
+            )
         if self.percent_watts_hi is not None:
-            self.watts_hi = floor(float(ftp_watts) * float(self.percent_watts_hi) / 100.0)
+            self.watts_hi = floor(
+                float(ftp_watts) * float(self.percent_watts_hi) / 100.0
+            )
 
         self._generate_bands()
 
@@ -120,6 +135,7 @@ class WorkoutStep(BaseModel):
 
 class Workout(BaseModel):
     name: str
+    description: str | None = None
     workout_date: date | None = None
 
     steps: list[WorkoutStep] = Field(default_factory=list)
@@ -131,7 +147,7 @@ class Workout(BaseModel):
     def get_step_at(self, t_s: float) -> tuple[int | None, WorkoutStep | None]:
         """Returns the WorkoutStep active at time t_s into the workout."""
         elapsed = 0.0
-        for idx,step in enumerate(self.steps):
+        for idx, step in enumerate(self.steps):
             if elapsed <= t_s < elapsed + step.duration_s:
                 return (idx, step)
             elapsed += step.duration_s

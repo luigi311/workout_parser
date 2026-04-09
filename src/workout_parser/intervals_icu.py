@@ -1,6 +1,7 @@
 from __future__ import annotations
+import base64
 from math import floor
-from os import name
+from datetime import date
 from workout_parser.models import WorkoutStep, Workout
 
 import json
@@ -132,8 +133,53 @@ def _flatten_icu_steps(steps: list[dict]) -> list[WorkoutStep]:
     return flat
 
 
-def parse_intervals_icu_json(data: dict, name: str) -> Workout:
+def parse_intervals_icu_json(data: dict, path: Path) -> Workout:
     """Parse Intervals.icu exported workout JSON (running/cycling)."""
+
+    name = data.get("name") or path.stem
+
+    # Check if the json is in the Intervals.icu API format with a base64-encoded workout file; if so, decode and parse that instead of the JSON steps
+    if "workout_filename" in data and "workout_file_base64" in data:
+        filename = data["workout_filename"]
+        try:
+            decoded_bytes = base64.b64decode(data["workout_file_base64"])
+        except Exception as e:
+            raise ValueError(f"Failed to decode Intervals.icu API workout JSON: {e}")
+
+        if filename.endswith(".json"):
+            try:
+                decoded_data = json.loads(decoded_bytes)
+                workout = parse_intervals_icu_json(decoded_data, path)
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to parse decoded Intervals.icu workout JSON: {e}"
+                )
+
+        elif filename.endswith(".fit"):
+            # If its a .fit file then call the fit parser on the decoded bytes
+            from workout_parser.fit import parse_fit_from_bytes
+
+            workout = parse_fit_from_bytes(decoded_bytes, name=name)
+        else:
+            raise ValueError(
+                f"Unsupported workout file type in Intervals.icu API JSON: {filename}"
+            )
+
+        # Parse out the name from the original JSON if available, otherwise use the filename stem
+        workout.name = data.get("name") or Path(filename).stem
+        # Parse out the description from the original JSON if available
+        workout.description = data.get("description")
+        # Parse out the workout date from the original JSON if available
+        workout_date_str = data.get("start_date_local")
+        if workout_date_str:
+            try:
+                # Parse out the date from 2026-04-07T08:00:00
+                workout.workout_date = date.fromisoformat(
+                    workout_date_str.split("T")[0]
+                )
+            except Exception:
+                pass  # Ignore date parsing errors and leave workout_date as None
+        return workout
 
     steps_in = data.get("steps") or []
     steps = _flatten_icu_steps(steps_in)
@@ -146,4 +192,4 @@ def parse_intervals_icu_json_file(path: Path) -> Workout:
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
-    return parse_intervals_icu_json(data, name=path.stem)
+    return parse_intervals_icu_json(data, path)

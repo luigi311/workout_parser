@@ -1,0 +1,156 @@
+{
+    "id": 101700755,
+    "start_date_local": "2026-04-07T08:00:00",
+    "icu_training_load": 81,
+    "icu_atl": 43.38638,
+    "icu_ctl": 27.015354,
+    "type": "Run",
+    "carbs_used": null,
+    "ss_p_max": null,
+    "ss_w_prime": null,
+    "ss_cp": null,
+    "calendar_id": 1,
+    "uid": "6a87a9c2-ac39-421e-bb5d-d4f230cb3e08",
+    "athlete_id": "i389547",
+    "category": "WORKOUT",
+    "end_date_local": "2026-04-07T09:10:00",
+    "name": "30-Minute Threshold Test (New Build Phase)",
+    "description": "- 30m ramp 50-90% pace 30-min progressive ramp warmup (Shin-Safe)\n- 5m 70% pace Priming strides / Easy prep\n- 30m 100% pace 30-Minute Threshold Test (Max Effort)\n- 10m ramp 70-50% pace Cooldown ramp\n\n30-minute all-out effort to establish new thresholds for the build phase.\n\nA 30-minute 'best effort' test to find your new Threshold Pace and Heart Rate for the Build Phase. Follow the 10-minute 'lap' instruction for accurate data.",
+    "indoor": null,
+    "color": null,
+    "moving_time": 4500,
+    "icu_ftp": null,
+    "w_prime": null,
+    "p_max": null,
+    "atl_days": null,
+    "ctl_days": null,
+    "updated": "2026-04-06T08:31:57.708+00:00",
+    "not_on_fitness_chart": false,
+    "show_as_note": false,
+    "show_on_ctl_line": false,
+    "for_week": false,
+    "target": null,
+    "joules": null,
+    "joules_above_ftp": null,
+    "workout_doc": {
+        "duration": 4500,
+        "distance": 6745.8477,
+        "ftp": 165,
+        "lthr": 172,
+        "threshold_pace": 1.8583603,
+        "pace_units": "MINS_MILE",
+        "target": "PACE",
+        "steps": [
+            {
+                "duration": 1800,
+                "ramp": true,
+                "pace": {
+                    "start": 50,
+                    "end": 90,
+                    "units": "%pace"
+                },
+                "_pace": {
+                    "value": 1.3008521795272827,
+                    "start": 0.9291801452636719,
+                    "end": 1.6725242137908936
+                },
+                "_distance": 2341.534
+            },
+            {
+                "duration": 300,
+                "pace": {
+                    "value": 70,
+                    "units": "%pace"
+                },
+                "_pace": {
+                    "value": 1.3008521795272827,
+                    "start": 1.2683308750391007,
+                    "end": 1.3333734840154647
+                },
+                "_distance": 390.25565
+            },
+            {
+                "duration": 1800,
+                "pace": {
+                    "value": 100,
+                    "units": "%pace"
+                },
+                "_pace": {
+                    "value": 1.8583602905273438,
+                    "start": 1.8119012832641601,
+                    "end": 1.9048192977905274
+                },
+                "_distance": 3345.0486
+            },
+            {
+                "duration": 600,
+                "ramp": true,
+                "pace": {
+                    "start": 70,
+                    "end": 50,
+                    "units": "%pace"
+                },
+                "_pace": {
+                    "value": 1.1150161623954773,
+                    "start": 1.3008521795272827,
+                    "end": 0.9291801452636719
+                },
+                "_distance": 669.0097
+            }
+        ],
+        "zoneTimes": [
+            {
+                "id": "Z1",
+                "secs": 2700
+            },
+            {
+                "id": "Z2",
+                "secs": 0
+            },
+            {
+                "id": "Z3",
+                "secs": 0
+            },
+            {
+                "id": "Z4",
+                "secs": 1800
+            },
+            {
+                "id": "Z5",
+                "secs": 0
+            }
+        ],
+        "options": {},
+        "locales": []
+    },
+    "push_errors": null,
+    "athlete_cannot_edit": false,
+    "hide_from_athlete": false,
+    "structure_read_only": false,
+    "created_by_id": "i389547",
+    "shared_event_id": null,
+    "entered": false,
+    "carbs_per_hour": null,
+    "sub_type": null,
+    "distance": 6745.8477,
+    "tags": null,
+    "attachments": null,
+    "oauth_client_id": 211,
+    "external_id": null,
+    "load_target": null,
+    "time_target": null,
+    "distance_target": null,
+    "training_availability": "NORMAL",
+    "max_training_time": null,
+    "can_train_sports": null,
+    "plan_athlete_id": null,
+    "plan_folder_id": null,
+    "plan_workout_id": null,
+    "plan_applied": null,
+    "icu_intensity": 80.49844,
+    "strain_score": null,
+    "plan_name": null,
+    "workout_filename": "30_Minute_Threshold_Test_New_Build_Phase_.json",
+    "workout_file_base64": "eyJkdXJhdGlvbiI6NDUwMCwiZGlzdGFuY2UiOjY3NDUuODQ3NywiZnRwIjoxNjUsImx0aHIiOjE3MiwidGhyZXNob2xkX3BhY2UiOjEuODU4MzYwMywicGFjZV91bml0cyI6Ik1JTlNfTUlMRSIsInNwb3J0U2V0dGluZ3MiOnsiaWQiOjE2MzA4ODYsImF0aGxldGVfaWQiOiJpMzg5NTQ3IiwidHlwZXMiOlsiUnVuIiwiVmlydHVhbFJ1biIsIlRyYWlsUnVuIl0sIndhcm11cF90aW1lIjozMDAsImNvb2xkb3duX3RpbWUiOjMwMCwiZnRwIjoxNjUsInBvd2VyX3pvbmVzIjpbODAsOTAsMTAwLDExNSw5OTldLCJzd2VldF9zcG90X21pbiI6ODQsInN3ZWV0X3Nwb3RfbWF4Ijo5NywicG93ZXJfc3Bpa2VfdGhyZXNob2xkIjozMCwicG93ZXJfem9uZV9uYW1lcyI6WyJab25lIDEiLCJab25lIDIiLCJab25lIDMiLCJab25lIDQiLCJab25lIDUiXSwiZnRwX2VzdF9taW5fc2VjcyI6MzAwLCJ1c2VfbGFwc19mb3JfcG93ZXJfaW50ZXJ2YWxzIjpmYWxzZSwia2VlcF9hbGxfbGFwc19mb3JfcG93ZXJfaW50ZXJ2YWxzIjp0cnVlLCJwb3dlcl9pbnRlcnZhbHNfc3RhcnRfbG9ja2VkIjpmYWxzZSwibHRociI6MTcyLCJtYXhfaHIiOjIwNSwiaHJfem9uZXMiOlsxNDUsMTUzLDE2MiwxNzEsMjA1XSwiaHJfem9uZV9uYW1lcyI6WyJab25lIDEiLCJab25lIDIiLCJab25lIDMiLCJab25lIDQiLCJab25lIDUiXSwiaHJfbG9hZF90eXBlIjoiSFJTUyIsImhycmNfbWluX3BlcmNlbnQiOjEwMC4wLCJ0aHJlc2hvbGRfcGFjZSI6MS44NTgzNjAzLCJwYWNlX3VuaXRzIjoiTUlOU19NSUxFIiwicGFjZV96b25lcyI6WzgwLjAsOTAuMCw5NS4wLDEwMC4wLDk5OS4wXSwicGFjZV96b25lX25hbWVzIjpbIlpvbmUgMSIsIlpvbmUgMiIsIlpvbmUgMyIsIlpvbmUgNCIsIlpvbmUgNSJdLCJwYWNlX2xvYWRfdHlwZSI6IlJVTiIsImdhcF9tb2RlbCI6IlNUUkFWQV9SVU4iLCJlbGV2YXRpb25fY29ycmVjdGlvbiI6IkFVVE8iLCJ1c2VfZ2FwX3pvbmVfdGltZXMiOnRydWUsImJlc3RfZWZmb3J0X2Rpc3RhbmNlcyI6WzQwMC4wLDgwMC4wLDE1MDAuMCwxNjA5LjM0LDMwMDAuMCw1MDAwLjAsMTAwMDAuMCwyMTA5Ny41LDQyMTk1LjBdLCJwYWNlX2N1cnZlX3N0YXJ0IjoyMjguNTk5OTksImxvYWRfb3JkZXIiOiJQT1dFUl9QQUNFX0hSIiwidGl6X29yZGVyIjoiSFJfUE9XRVJfUEFDRSIsIndvcmtvdXRfb3JkZXIiOiJQT1dFUl9QQUNFX0hSIiwiaW50ZXJ2YWxfZGlzcGxheSI6IlBPV0VSX1BBQ0VfSFIiLCJleHRyYWN0X3dvcmtvdXRzIjpmYWxzZSwic2hvd19wYXVzZXMiOjYwMCwiaWdub3JlX3ZlbG9jaXR5IjpmYWxzZSwidXBkYXRlX2FjdGl2aXR5X25hbWVfZnJvbV93b3Jrb3V0Ijp0cnVlLCJhY3Rpdml0eV9maWVsZF9pZHMiOltdLCJhY3Rpdml0eV9jaGFydHMiOnt9LCJjdXN0b21fZmllbGRfaWRzIjpbXSwiY3VzdG9tX2ZpZWxkX3ZhbHVlcyI6e30sImN1c3RvbV96b25lc19pZHMiOltdLCJvdGhlciI6ZmFsc2UsImVGVFBTdXBwb3J0ZWQiOnRydWUsInVzZV9kaXN0YW5jZV9mb3JfaW50ZXJ2YWxzIjpmYWxzZX0sInRhcmdldCI6IlBBQ0UiLCJzdGVwcyI6W3siZHVyYXRpb24iOjE4MDAsInJhbXAiOnRydWUsInBhY2UiOnsic3RhcnQiOjUwLCJlbmQiOjkwLCJ1bml0cyI6IiVwYWNlIn0sIl9wYWNlIjp7InZhbHVlIjoxLjMwMDg1MjE3OTUyNzI4MjcsInN0YXJ0IjowLjkyOTE4MDE0NTI2MzY3MTksImVuZCI6MS42NzI1MjQyMTM3OTA4OTM2fSwiX2Rpc3RhbmNlIjoyMzQxLjUzNH0seyJkdXJhdGlvbiI6MzAwLCJwYWNlIjp7InZhbHVlIjo3MCwidW5pdHMiOiIlcGFjZSJ9LCJfcGFjZSI6eyJ2YWx1ZSI6MS4zMDA4NTIxNzk1MjcyODI3LCJzdGFydCI6MS4yNjgzMzA4NzUwMzkxMDA3LCJlbmQiOjEuMzMzMzczNDg0MDE1NDY0N30sIl9kaXN0YW5jZSI6MzkwLjI1NTY1fSx7ImR1cmF0aW9uIjoxODAwLCJwYWNlIjp7InZhbHVlIjoxMDAsInVuaXRzIjoiJXBhY2UifSwiX3BhY2UiOnsidmFsdWUiOjEuODU4MzYwMjkwNTI3MzQzOCwic3RhcnQiOjEuODExOTAxMjgzMjY0MTYwMSwiZW5kIjoxLjkwNDgxOTI5Nzc5MDUyNzR9LCJfZGlzdGFuY2UiOjMzNDUuMDQ4Nn0seyJkdXJhdGlvbiI6NjAwLCJyYW1wIjp0cnVlLCJwYWNlIjp7InN0YXJ0Ijo3MCwiZW5kIjo1MCwidW5pdHMiOiIlcGFjZSJ9LCJfcGFjZSI6eyJ2YWx1ZSI6MS4xMTUwMTYxNjIzOTU0NzczLCJzdGFydCI6MS4zMDA4NTIxNzk1MjcyODI3LCJlbmQiOjAuOTI5MTgwMTQ1MjYzNjcxOX0sIl9kaXN0YW5jZSI6NjY5LjAwOTd9XSwiem9uZVRpbWVzIjpbeyJpZCI6IloxIiwic2VjcyI6MjcwMH0seyJpZCI6IloyIiwic2VjcyI6MH0seyJpZCI6IlozIiwic2VjcyI6MH0seyJpZCI6Ilo0Iiwic2VjcyI6MTgwMH0seyJpZCI6Ilo1Iiwic2VjcyI6MH1dLCJvcHRpb25zIjp7fSwibG9jYWxlcyI6W119",
+    "paired_activity_id": "i137996153"
+}
