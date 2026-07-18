@@ -13,6 +13,9 @@ dependencies = [
     "pydantic>=2.12.5",
 ]
 
+[project.scripts]
+workout-parser = "workout_parser.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
