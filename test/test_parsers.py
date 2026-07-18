@@ -5,7 +5,18 @@ from itertools import combinations
 from pathlib import Path
 
 import pytest
-from workout_parser import PointTarget, RampTarget, RangeTarget, load_workout
+from workout_parser import (
+    DistanceDuration,
+    OpenDuration,
+    PointTarget,
+    RampTarget,
+    RangeTarget,
+    TimeDuration,
+    UnsupportedWorkoutFeatureError,
+    load_workout,
+)
+from workout_parser.intervals_icu import parse_intervals_icu_json
+from workout_parser.fit import parse_fit
 
 HERE = Path(__file__).parent
 DATA = HERE / "data"
@@ -103,3 +114,122 @@ def test_json_preserves_target_shapes() -> None:
     assert workout.steps[3].speed_percent_threshold == RampTarget(
         start=70, end=50
     )
+
+
+def test_json_preserves_supported_targets_and_durations() -> None:
+    workout = parse_intervals_icu_json(
+        {
+            "steps": [
+                {
+                    "duration": 60,
+                    "hr": {"value": 2, "units": "hr_zone"},
+                    "_hr": {"start": 146, "end": 153},
+                },
+                {
+                    "duration": 30,
+                    "hr": {"value": 135, "units": "bpm"},
+                },
+                {
+                    "duration": 30,
+                    "hr": {"start": 85, "end": 90, "units": "%lthr"},
+                },
+                {
+                    "duration": 120,
+                    "distance": 400,
+                    "cadence": {"value": 90, "units": "rpm"},
+                },
+                {"duration": 30, "until_lap_press": True},
+            ]
+        },
+        Path("supported.json"),
+    )
+
+    assert workout.steps[0].duration == TimeDuration(seconds=60)
+    assert workout.steps[0].heart_rate_bpm == RangeTarget(low=146, high=153)
+    assert workout.steps[0].heart_rate_zone == PointTarget(value=2)
+    assert workout.steps[1].heart_rate_bpm == PointTarget(value=135)
+    assert workout.steps[2].heart_rate_percent_lthr == RangeTarget(
+        low=85, high=90
+    )
+    assert workout.steps[3].duration == DistanceDuration(meters=400)
+    assert workout.steps[3].cadence_rpm == PointTarget(value=90)
+    assert workout.steps[4].duration == OpenDuration()
+    assert workout.total_seconds is None
+
+
+def test_unsupported_duration_is_strict_or_diagnostic() -> None:
+    data = {"steps": [{"calories": 100}]}
+
+    with pytest.raises(UnsupportedWorkoutFeatureError):
+        parse_intervals_icu_json(data, Path("calories.json"))
+
+    workout = parse_intervals_icu_json(
+        data, Path("calories.json"), strict=False
+    )
+    assert workout.steps == []
+    assert workout.diagnostics[0].code == "unsupported_feature"
+
+
+class _FitField:
+    def __init__(self, name: str, value) -> None:
+        self.name = name
+        self.value = value
+
+
+class _FitMessage:
+    def __init__(self, **fields) -> None:
+        self.fields = [_FitField(name, value) for name, value in fields.items()]
+
+    def __iter__(self):
+        return iter(self.fields)
+
+
+class _FitFile:
+    def __init__(self, *messages: _FitMessage) -> None:
+        self.messages = messages
+
+    def get_messages(self, name: str):
+        assert name == "workout_step"
+        return self.messages
+
+
+def test_fit_decodes_typed_duration_and_target_fields() -> None:
+    workout = parse_fit(
+        _FitFile(
+            _FitMessage(
+                message_index=0,
+                duration_type="distance",
+                duration_distance=400.0,
+                target_type="heart_rate",
+                target_hr_zone=3,
+                custom_target_heart_rate_low=0,
+                custom_target_heart_rate_high=0,
+            ),
+            _FitMessage(
+                message_index=1,
+                duration_type="time",
+                duration_time=60.0,
+                target_type="heart_rate",
+                target_hr_zone=0,
+                custom_target_heart_rate_low=70,
+                custom_target_heart_rate_high=80,
+            ),
+            _FitMessage(
+                message_index=2,
+                duration_type="open",
+                target_type="cadence",
+                target_cadence_zone=0,
+                custom_target_cadence_low=85,
+                custom_target_cadence_high=95,
+            ),
+        )
+    )
+
+    assert workout.steps[0].duration == DistanceDuration(meters=400)
+    assert workout.steps[0].heart_rate_zone == PointTarget(value=3)
+    assert workout.steps[0].heart_rate_percent_max is None
+    assert workout.steps[1].heart_rate_percent_max == RangeTarget(
+        low=70, high=80
+    )
+    assert workout.steps[2].duration == OpenDuration()
+    assert workout.steps[2].cadence_rpm == RangeTarget(low=85, high=95)

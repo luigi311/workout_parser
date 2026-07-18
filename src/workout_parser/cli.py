@@ -6,7 +6,16 @@ import argparse
 import sys
 from pathlib import Path
 
-from workout_parser import PointTarget, RampTarget, RangeTarget, Workout, load_workout
+from workout_parser import (
+    DistanceDuration,
+    OpenDuration,
+    PointTarget,
+    RampTarget,
+    RangeTarget,
+    TimeDuration,
+    Workout,
+    load_workout,
+)
 
 
 def _format_duration(seconds: float) -> str:
@@ -39,7 +48,12 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
         lines.append(f"Description: {workout.description}")
     if workout.workout_date:
         lines.append(f"Date:        {workout.workout_date}")
-    lines.append(f"Total:       {_format_duration(workout.total_seconds)}")
+    total = (
+        _format_duration(workout.total_seconds)
+        if workout.total_seconds is not None
+        else "variable"
+    )
+    lines.append(f"Total:       {total}")
     lines.append(f"Steps:       {len(workout.steps)}")
     lines.append("─" * 60)
 
@@ -47,7 +61,13 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
         lines.append(f"\n  Step {i + 1}:")
         if step.text:
             lines.append(f"    Text:     {step.text}")
-        lines.append(f"    Duration: {_format_duration(step.duration_s)}")
+        if isinstance(step.duration, TimeDuration):
+            duration = _format_duration(step.duration.seconds)
+        elif isinstance(step.duration, DistanceDuration):
+            duration = f"{step.duration.meters:g} m"
+        elif isinstance(step.duration, OpenDuration):
+            duration = f"open ({step.duration.event})"
+        lines.append(f"    Duration: {duration}")
 
         # Power targets
         if step.power_watts is not None:
@@ -57,6 +77,11 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
         elif step.power_percent_ftp is not None:
             lines.append(
                 f"    %FTP:     {_format_target(step.power_percent_ftp, decimals=0, suffix='%')}"
+            )
+        if step.power_zone is not None:
+            lines.append(
+                "    Power zone: "
+                + _format_target(step.power_zone, decimals=0, suffix="")
             )
 
         # Pace targets
@@ -70,6 +95,47 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
                 + _format_target(
                     step.speed_percent_threshold, decimals=0, suffix="%"
                 )
+            )
+        if step.speed_zone is not None:
+            lines.append(
+                "    Pace zone: "
+                + _format_target(step.speed_zone, decimals=0, suffix="")
+            )
+
+        if step.heart_rate_bpm is not None:
+            lines.append(
+                "    HR:       "
+                + _format_target(step.heart_rate_bpm, decimals=0, suffix=" bpm")
+            )
+        if step.heart_rate_percent_max is not None:
+            lines.append(
+                "    %Max HR:  "
+                + _format_target(
+                    step.heart_rate_percent_max, decimals=0, suffix="%"
+                )
+            )
+        if step.heart_rate_percent_lthr is not None:
+            lines.append(
+                "    %LTHR:    "
+                + _format_target(
+                    step.heart_rate_percent_lthr, decimals=0, suffix="%"
+                )
+            )
+        if step.heart_rate_zone is not None:
+            lines.append(
+                "    HR zone:  "
+                + _format_target(step.heart_rate_zone, decimals=0, suffix="")
+            )
+
+        if step.cadence_rpm is not None:
+            lines.append(
+                "    Cadence:  "
+                + _format_target(step.cadence_rpm, decimals=0, suffix=" rpm")
+            )
+        if step.cadence_zone is not None:
+            lines.append(
+                "    Cadence zone: "
+                + _format_target(step.cadence_zone, decimals=0, suffix="")
             )
 
     return "\n".join(lines)

@@ -21,6 +21,24 @@ class RampTarget(BaseModel):
     end: int | float
 
 
+class TimeDuration(BaseModel):
+    seconds: float
+
+
+class DistanceDuration(BaseModel):
+    meters: float
+
+
+class OpenDuration(BaseModel):
+    event: str = "lap_button"
+
+
+class ParseDiagnostic(BaseModel):
+    code: str
+    message: str
+    step_index: int | None = None
+
+
 def _scale_target(
     target: PointTarget | RangeTarget | RampTarget,
     factor: float,
@@ -43,14 +61,28 @@ def _scale_target(
 
 class WorkoutStep(BaseModel):
     text: str | None = None
-    duration_s: float
+    duration: TimeDuration | DistanceDuration | OpenDuration
 
     power_watts: PointTarget | RangeTarget | RampTarget | None = None
     power_percent_ftp: PointTarget | RangeTarget | RampTarget | None = None
+    power_zone: PointTarget | RangeTarget | RampTarget | None = None
     speed_mps: PointTarget | RangeTarget | RampTarget | None = None
     speed_percent_threshold: PointTarget | RangeTarget | RampTarget | None = None
+    speed_zone: PointTarget | RangeTarget | RampTarget | None = None
+    heart_rate_bpm: PointTarget | RangeTarget | RampTarget | None = None
+    heart_rate_percent_max: PointTarget | RangeTarget | RampTarget | None = None
+    heart_rate_percent_lthr: PointTarget | RangeTarget | RampTarget | None = None
+    heart_rate_zone: PointTarget | RangeTarget | RampTarget | None = None
+    cadence_rpm: PointTarget | RangeTarget | RampTarget | None = None
+    cadence_zone: PointTarget | RangeTarget | RampTarget | None = None
 
     model_config = {"frozen": False}
+
+    @property
+    def duration_s(self) -> float | None:
+        if isinstance(self.duration, TimeDuration):
+            return self.duration.seconds
+        return None
 
     def generate_absolute_power_targets_from_percent(self, ftp_watts: int) -> None:
         """Resolve the percent-FTP target while preserving its target shape."""
@@ -75,18 +107,25 @@ class Workout(BaseModel):
     name: str
     description: str | None = None
     workout_date: date | None = None
+    diagnostics: list[ParseDiagnostic] = Field(default_factory=list)
 
     steps: list[WorkoutStep] = Field(default_factory=list)
 
     @property
-    def total_seconds(self) -> float:
-        return sum(s.duration_s for s in self.steps)
+    def total_seconds(self) -> float | None:
+        durations = [s.duration_s for s in self.steps]
+        if any(duration is None for duration in durations):
+            return None
+        return sum(duration for duration in durations if duration is not None)
 
     def get_step_at(self, t_s: float) -> tuple[int | None, WorkoutStep | None]:
         """Returns the WorkoutStep active at time t_s into the workout."""
         elapsed = 0.0
         for idx, step in enumerate(self.steps):
-            if elapsed <= t_s < elapsed + step.duration_s:
+            duration_s = step.duration_s
+            if duration_s is None:
+                return (None, None)
+            if elapsed <= t_s < elapsed + duration_s:
                 return (idx, step)
-            elapsed += step.duration_s
+            elapsed += duration_s
         return (None, None)

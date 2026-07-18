@@ -61,12 +61,12 @@ def pretty_workout_name(raw: str) -> str:
     return " ".join(out)
 
 
-def load_workout(path: Path) -> Workout:
+def load_workout(path: Path, *, strict: bool = True) -> Workout:
     ext = path.suffix.lower()
     if ext == ".fit":
-        return parse_fit_from_file(path)
+        return parse_fit_from_file(path, strict=strict)
     if ext == ".json":
-        return parse_intervals_icu_json_file(path)
+        return parse_intervals_icu_json_file(path, strict=strict)
     return Workout(name=path.stem, steps=[])
 
 
