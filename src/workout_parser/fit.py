@@ -1,5 +1,5 @@
 from math import floor
-from workout_parser.models import Workout, WorkoutStep
+from workout_parser.models import PointTarget, RangeTarget, Workout, WorkoutStep
 from pathlib import Path
 from fitparse import FitFile
 
@@ -100,10 +100,6 @@ def parse_fit(ff: FitFile, name: str = "Unnamed Workout") -> Workout:
         percent_watts_mid = None
         percent_watts_lo = percent_watts_hi = None
 
-        # Fit doesnt seem to have support for % of threshold pace
-        percent_speed_mid = None
-        percent_speed_lo = percent_speed_hi = None
-
         # PACE / SPEED
         if ("pace" in tgt_type) or ("speed" in tgt_type):
             lo_raw = _first_non_none(
@@ -174,20 +170,33 @@ def parse_fit(ff: FitFile, name: str = "Unnamed Workout") -> Workout:
                     percent_watts_mid = mid_f
 
         # ---------- build step (prefer power, then pace; else duration-only) ----------
+        power_watts = None
+        if watts_lo is not None and watts_hi is not None:
+            power_watts = RangeTarget(
+                low=floor(watts_lo), high=floor(watts_hi)
+            )
+        elif watts_mid is not None:
+            power_watts = PointTarget(value=floor(watts_mid))
+
+        power_percent_ftp = None
+        if percent_watts_lo is not None and percent_watts_hi is not None:
+            power_percent_ftp = RangeTarget(
+                low=percent_watts_lo, high=percent_watts_hi
+            )
+        elif percent_watts_mid is not None:
+            power_percent_ftp = PointTarget(value=percent_watts_mid)
+
+        speed_mps = None
+        if speed_lo is not None and speed_hi is not None:
+            speed_mps = RangeTarget(low=speed_lo, high=speed_hi)
+        elif speed_mid is not None:
+            speed_mps = PointTarget(value=speed_mid)
+
         step = WorkoutStep(
             duration_s=duration_s,
-            watts_mid=floor(watts_mid) if watts_mid is not None else None,
-            watts_lo=floor(watts_lo) if watts_lo is not None else None,
-            watts_hi=floor(watts_hi) if watts_hi is not None else None,
-            percent_watts_mid=percent_watts_mid,
-            percent_watts_lo=percent_watts_lo,
-            percent_watts_hi=percent_watts_hi,
-            speed_mps_mid=speed_mid,
-            speed_mps_lo=speed_lo,
-            speed_mps_hi=speed_hi,
-            percent_speed_mid=percent_speed_mid,
-            percent_speed_lo=percent_speed_lo,
-            percent_speed_hi=percent_speed_hi,
+            power_watts=power_watts,
+            power_percent_ftp=power_percent_ftp,
+            speed_mps=speed_mps,
         )
 
         entries.append({"type": "step", "message_index": msg_idx, "step": step})

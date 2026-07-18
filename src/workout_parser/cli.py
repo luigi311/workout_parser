@@ -6,13 +6,26 @@ import argparse
 import sys
 from pathlib import Path
 
-from workout_parser import load_workout, Workout
+from workout_parser import PointTarget, RampTarget, RangeTarget, Workout, load_workout
 
 
 def _format_duration(seconds: float) -> str:
     """Format seconds as MM:SS."""
     m, s = divmod(int(seconds), 60)
     return f"{m:02d}:{s:02d}"
+
+
+def _format_target(target, *, decimals: int, suffix: str) -> str:
+    def value(number: float) -> str:
+        return f"{number:.{decimals}f}{suffix}"
+
+    if isinstance(target, PointTarget):
+        return value(target.value)
+    if isinstance(target, RangeTarget):
+        return f"{value(target.low)} – {value(target.mid)} – {value(target.high)}"
+    if isinstance(target, RampTarget):
+        return f"ramp {value(target.start)} → {value(target.end)}"
+    raise TypeError(f"Unknown target type: {type(target).__name__}")
 
 
 def _dump_workout(workout: Workout, json_out: bool = False) -> str:
@@ -37,36 +50,27 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
         lines.append(f"    Duration: {_format_duration(step.duration_s)}")
 
         # Power targets
-        if step.watts_mid is not None:
-            lo = step.watts_lo
-            hi = step.watts_hi
-            if lo is not None and hi is not None:
-                lines.append(f"    Watts:    {lo} – {step.watts_mid} – {hi}")
-            else:
-                lines.append(f"    Watts:    {step.watts_mid}")
-        elif step.percent_watts_mid is not None:
-            lo = step.percent_watts_lo
-            hi = step.percent_watts_hi
-            if lo is not None and hi is not None:
-                lines.append(f"    %FTP:     {lo:.0f}% – {step.percent_watts_mid:.0f}% – {hi:.0f}%")
-            else:
-                lines.append(f"    %FTP:     {step.percent_watts_mid:.0f}%")
+        if step.power_watts is not None:
+            lines.append(
+                f"    Watts:    {_format_target(step.power_watts, decimals=0, suffix=' W')}"
+            )
+        elif step.power_percent_ftp is not None:
+            lines.append(
+                f"    %FTP:     {_format_target(step.power_percent_ftp, decimals=0, suffix='%')}"
+            )
 
         # Pace targets
-        if step.speed_mps_mid is not None:
-            lo = step.speed_mps_lo
-            hi = step.speed_mps_hi
-            if lo is not None and hi is not None:
-                lines.append(f"    Speed:    {lo:.2f} – {step.speed_mps_mid:.2f} – {hi:.2f} m/s")
-            else:
-                lines.append(f"    Speed:    {step.speed_mps_mid:.2f} m/s")
-        elif step.percent_speed_mid is not None:
-            lo = step.percent_speed_lo
-            hi = step.percent_speed_hi
-            if lo is not None and hi is not None:
-                lines.append(f"    %Pace:    {lo:.0f}% – {step.percent_speed_mid:.0f}% – {hi:.0f}%")
-            else:
-                lines.append(f"    %Pace:    {step.percent_speed_mid:.0f}%")
+        if step.speed_mps is not None:
+            lines.append(
+                f"    Speed:    {_format_target(step.speed_mps, decimals=2, suffix=' m/s')}"
+            )
+        elif step.speed_percent_threshold is not None:
+            lines.append(
+                "    %Pace:    "
+                + _format_target(
+                    step.speed_percent_threshold, decimals=0, suffix="%"
+                )
+            )
 
     return "\n".join(lines)
 

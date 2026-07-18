@@ -2,7 +2,13 @@ from __future__ import annotations
 import base64
 from math import floor
 from datetime import date
-from workout_parser.models import WorkoutStep, Workout
+from workout_parser.models import (
+    PointTarget,
+    RampTarget,
+    RangeTarget,
+    Workout,
+    WorkoutStep,
+)
 
 import json
 from typing import TYPE_CHECKING
@@ -23,6 +29,33 @@ def _coerce_float(v, default: float | None = None) -> float | None:
         return float(v)
     except Exception:
         return default
+
+
+def _target_from_icu(
+    metadata: object,
+    *,
+    ramp: bool,
+    integer: bool = False,
+) -> PointTarget | RangeTarget | RampTarget | None:
+    if not isinstance(metadata, dict):
+        return None
+
+    value = _coerce_float(metadata.get("value"))
+    start = _coerce_float(metadata.get("start"))
+    end = _coerce_float(metadata.get("end"))
+
+    if integer:
+        value = floor(value) if value is not None else None
+        start = floor(start) if start is not None else None
+        end = floor(end) if end is not None else None
+
+    if ramp and start is not None and end is not None:
+        return RampTarget(start=start, end=end)
+    if start is not None and end is not None:
+        return RangeTarget(low=start, high=end)
+    if value is not None:
+        return PointTarget(value=value)
+    return None
 
 
 def _flatten_icu_steps(steps: list[dict]) -> list[WorkoutStep]:
@@ -46,84 +79,37 @@ def _flatten_icu_steps(steps: list[dict]) -> list[WorkoutStep]:
         if dur <= 0:
             return
 
-        # Targets we might parse
-        speed_mid = None
-        speed_lo = speed_hi = None
-
-        watts_mid = None
-        watts_lo = watts_hi = None
-
-        percent_watts_mid = None
-        percent_watts_lo = percent_watts_hi = None
-
-        percent_speed_mid = None
-        percent_speed_lo = percent_speed_hi = None
+        ramp = node.get("ramp") is True
 
         # -------- Pace parsing --------
         p_abs_meta = node.get("_pace")
-        if isinstance(p_abs_meta, dict):
-            if p_abs_meta.get("value") is not None:
-                speed_mid = _coerce_float(p_abs_meta.get("value"))
-
-            s0 = _coerce_float(p_abs_meta.get("start"))
-            s1 = _coerce_float(p_abs_meta.get("end"))
-
-            if s0 is not None and s1 is not None:
-                speed_lo, speed_hi = s0, s1
+        speed_target = _target_from_icu(p_abs_meta, ramp=ramp)
 
         p_per_meta = node.get("pace")
+        percent_speed_target = None
         if isinstance(p_per_meta, dict):
             units = (p_per_meta.get("units") or "").casefold()
             if "%pace" in units:
-                if p_per_meta.get("value") is not None:
-                    percent_speed_mid = _coerce_float(p_per_meta.get("value"))
-
-                s0 = _coerce_float(p_per_meta.get("start"))
-                s1 = _coerce_float(p_per_meta.get("end"))
-
-                if s0 is not None and s1 is not None:
-                    percent_speed_lo, percent_speed_hi = s0, s1
+                percent_speed_target = _target_from_icu(p_per_meta, ramp=ramp)
 
         # -------- Power parsing --------
         pw_abs_meta = node.get("_power")
-        if isinstance(pw_abs_meta, dict):
-            if pw_abs_meta.get("value") is not None:
-                watts_mid = _coerce_float(pw_abs_meta.get("value"))
-
-            w0 = _coerce_float(pw_abs_meta.get("start"))
-            w1 = _coerce_float(pw_abs_meta.get("end"))
-
-            if w0 is not None and w1 is not None:
-                watts_lo, watts_hi = w0, w1
+        power_target = _target_from_icu(pw_abs_meta, ramp=ramp, integer=True)
 
         pw_per_meta = node.get("power")
-        if watts_mid is None and isinstance(pw_per_meta, dict):
+        percent_power_target = None
+        if power_target is None and isinstance(pw_per_meta, dict):
             units = (pw_per_meta.get("units") or "").casefold()
             if "%power" in units or "ftp" in units:
-                if pw_per_meta.get("value") is not None:
-                    percent_watts_mid = _coerce_float(pw_per_meta.get("value"))
-
-                w0 = _coerce_float(pw_per_meta.get("start"))
-                w1 = _coerce_float(pw_per_meta.get("end"))
-
-                if w0 is not None and w1 is not None:
-                    percent_watts_lo, percent_watts_hi = w0, w1
+                percent_power_target = _target_from_icu(pw_per_meta, ramp=ramp)
 
         step = WorkoutStep(
             text=text,
             duration_s=dur,
-            watts_mid=floor(watts_mid) if watts_mid is not None else None,
-            watts_lo=floor(watts_lo) if watts_lo is not None else None,
-            watts_hi=floor(watts_hi) if watts_hi is not None else None,
-            speed_mps_mid=speed_mid,
-            speed_mps_lo=speed_lo,
-            speed_mps_hi=speed_hi,
-            percent_watts_mid=percent_watts_mid,
-            percent_watts_lo=percent_watts_lo,
-            percent_watts_hi=percent_watts_hi,
-            percent_speed_mid=percent_speed_mid,
-            percent_speed_lo=percent_speed_lo,
-            percent_speed_hi=percent_speed_hi,
+            power_watts=power_target,
+            power_percent_ftp=percent_power_target,
+            speed_mps=speed_target,
+            speed_percent_threshold=percent_speed_target,
         )
         flat.append(step)
 

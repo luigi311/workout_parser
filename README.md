@@ -26,7 +26,7 @@ print(workout.name)
 print(workout.total_seconds)
 
 for step in workout.steps:
-    print(step.duration_s, step.watts_mid, step.speed_mps_mid)
+    print(step.duration_s, step.power_watts, step.speed_mps)
 ```
 
 `load_workout` dispatches to the correct parser based on file extension.
@@ -44,17 +44,18 @@ for step in workout.steps:
 
 ### `WorkoutStep`
 
-Targets are stored as `mid / lo / hi` triplets. On construction, if only `mid` is provided the model synthesises a ±5% band; if only `lo`/`hi` are provided it computes `mid` automatically.
+Targets use distinct models inferred from their fields. A `PointTarget` has one
+`value`, a `RangeTarget` stores `low` and `high` and provides their computed
+`mid`, and a `RampTarget` has ordered `start` and `end` values. Ramp direction is
+therefore preserved and point targets do not acquire a synthetic display band.
 
 | Field | Description |
 |---|---|
 | `duration_s` | Step duration in seconds |
-| `watts_mid/lo/hi` | Absolute power targets (watts) |
-| `percent_watts_mid/lo/hi` | Power as % FTP |
-| `speed_mps_mid/lo/hi` | Absolute pace (metres per second) |
-| `percent_speed_mid/lo/hi` | Pace as % of threshold pace |
-| `speed_kph_mid/lo/hi` | Absolute pace kilometers per hour derived from `speed_mps_*` (property) |
-| `speed_mph_mid/lo/hi` | Absolute pace miles per hour derived from `speed_mps_*` (property) |
+| `power_watts` | Absolute power target (watts) |
+| `power_percent_ftp` | Power target as % FTP |
+| `speed_mps` | Absolute pace target (metres per second) |
+| `speed_percent_threshold` | Pace target as % of threshold pace |
 
 To resolve percent targets into absolute values after construction:
 

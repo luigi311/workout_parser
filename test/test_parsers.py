@@ -5,7 +5,7 @@ from itertools import combinations
 from pathlib import Path
 
 import pytest
-from workout_parser import load_workout
+from workout_parser import PointTarget, RampTarget, RangeTarget, load_workout
 
 HERE = Path(__file__).parent
 DATA = HERE / "data"
@@ -43,6 +43,16 @@ def _close(a: float | None, b: float | None, tol: float) -> bool:
     return math.isclose(a, b, rel_tol=0, abs_tol=tol)
 
 
+def _target_mid(target) -> float | None:
+    if isinstance(target, PointTarget):
+        return target.value
+    if isinstance(target, RangeTarget):
+        return target.mid
+    if isinstance(target, RampTarget):
+        return (target.start + target.end) / 2
+    return None
+
+
 @pytest.mark.parametrize("ftp", FTPS)
 @pytest.mark.parametrize("json_path,other_path", PAIRS, ids=lambda p: p.name)
 def test_parsers_agree(json_path: Path, other_path: Path, ftp: int) -> None:
@@ -55,8 +65,8 @@ def test_parsers_agree(json_path: Path, other_path: Path, ftp: int) -> None:
 
     for i, (sa, sb) in enumerate(zip(w_a.steps, w_b.steps)):
         assert _close(sa.duration_s, sb.duration_s, 0.5), f"Step {i} duration: {sa.duration_s} vs {sb.duration_s}"
-        assert _close(sa.watts_mid, sb.watts_mid, 1.0), f"Step {i} watts_mid: {sa.watts_mid} vs {sb.watts_mid}"
-        assert _close(sa.speed_mps_mid, sb.speed_mps_mid, 0.01), f"Step {i} pace mid: {sa.speed_mps_mid} vs {sb.speed_mps_mid}"
+        assert _close(_target_mid(sa.power_watts), _target_mid(sb.power_watts), 1.0)
+        assert _close(_target_mid(sa.speed_mps), _target_mid(sb.speed_mps), 0.01)
 
 
 # Test 30_Minute_Threshold_Test_New_Build_Phase_fit.json and 30_Minute_Threshold_Test_New_Build_Phase_json.json to make sure they match
@@ -78,5 +88,18 @@ def test_intervals_json() -> None:
 
     for i, (sa, sb) in enumerate(zip(w_a.steps, w_b.steps)):
         assert _close(sa.duration_s, sb.duration_s, 0.5), f"Step {i} duration: {sa.duration_s} vs {sb.duration_s}"
-        assert _close(sa.watts_mid, sb.watts_mid, 1.0), f"Step {i} watts_mid: {sa.watts_mid} vs {sb.watts_mid}"
-        assert _close(sa.speed_mps_mid, sb.speed_mps_mid, 0.01), f"Step {i} pace mid: {sa.speed_mps_mid} vs {sb.speed_mps_mid}"
+        assert _close(_target_mid(sa.power_watts), _target_mid(sb.power_watts), 1.0)
+        assert _close(_target_mid(sa.speed_mps), _target_mid(sb.speed_mps), 0.01)
+
+
+def test_json_preserves_target_shapes() -> None:
+    workout = load_workout(DATA / "30_Minute_Threshold_Test_New_Build_Phase_json.json")
+
+    assert workout.steps[0].speed_percent_threshold == RampTarget(
+        start=50, end=90
+    )
+    assert isinstance(workout.steps[1].speed_mps, RangeTarget)
+    assert workout.steps[1].speed_percent_threshold == PointTarget(value=70)
+    assert workout.steps[3].speed_percent_threshold == RampTarget(
+        start=70, end=50
+    )
