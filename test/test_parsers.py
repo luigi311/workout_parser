@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from itertools import combinations
 from pathlib import Path
@@ -15,11 +16,14 @@ from workout_parser import (
     RangeTarget,
     RepeatBlock,
     TimeDuration,
+    UnsupportedFormatError,
     UnsupportedWorkoutFeatureError,
+    WorkoutFileError,
     load_workout,
 )
 from workout_parser.intervals_icu import parse_intervals_icu_json
 from workout_parser.fit import parse_fit
+from workout_parser.cli import main as cli_main
 
 HERE = Path(__file__).parent
 DATA = HERE / "data"
@@ -493,3 +497,58 @@ def test_timeline_rejects_invalid_queries_and_excludes_exact_end() -> None:
             workout.get_step_at(timestamp)
     assert workout.get_step_at(0)[0] == 0
     assert workout.get_step_at(60) == (None, None)
+
+
+def test_loader_rejects_invalid_paths_formats_and_empty_files(tmp_path) -> None:
+    missing = tmp_path / "missing.json"
+    directory = tmp_path / "directory.json"
+    directory.mkdir()
+    unsupported = tmp_path / "workout.txt"
+    unsupported.write_text("workout")
+    empty = tmp_path / "empty.json"
+    empty.write_text("{}")
+
+    with pytest.raises(WorkoutFileError):
+        load_workout(missing)
+    with pytest.raises(WorkoutFileError):
+        load_workout(directory)
+    with pytest.raises(UnsupportedFormatError):
+        load_workout(unsupported)
+    with pytest.raises(InvalidWorkoutError):
+        load_workout(empty)
+
+
+def test_loader_preserves_malformed_source_as_error_cause(tmp_path) -> None:
+    malformed_json = tmp_path / "malformed.json"
+    malformed_json.write_text("{")
+    malformed_fit = tmp_path / "malformed.fit"
+    malformed_fit.write_bytes(b"not a fit file")
+
+    with pytest.raises(InvalidWorkoutError) as json_error:
+        load_workout(malformed_json)
+    assert isinstance(json_error.value.__cause__, json.JSONDecodeError)
+
+    with pytest.raises(InvalidWorkoutError) as fit_error:
+        load_workout(malformed_fit)
+    assert fit_error.value.__cause__ is not None
+
+
+def test_permissive_loader_allows_diagnostic_only_result(tmp_path) -> None:
+    path = tmp_path / "unsupported-duration.json"
+    path.write_text(json.dumps({"steps": [{"calories": 100}]}))
+
+    workout = load_workout(path, strict=False)
+    assert workout.instructions == ()
+    assert workout.diagnostics[0].code == "unsupported_feature"
+
+
+def test_cli_maps_public_errors_to_exit_one(tmp_path, capsys) -> None:
+    missing = tmp_path / "missing.json"
+
+    with pytest.raises(SystemExit) as exit_error:
+        cli_main([str(missing)])
+
+    assert exit_error.value.code == 1
+    captured = capsys.readouterr()
+    assert "Error:" in captured.err
+    assert "Traceback" not in captured.err

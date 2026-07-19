@@ -12,7 +12,8 @@ from workout_parser.models import (
     WorkoutStep,
 )
 from pathlib import Path
-from fitparse import FitFile
+from fitparse import FitFile, FitParseError
+from pydantic import ValidationError
 
 
 def _coerce_float(v, default: float | None = None) -> float | None:
@@ -20,7 +21,7 @@ def _coerce_float(v, default: float | None = None) -> float | None:
         if v is None:
             return default
         return float(v)
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 
@@ -41,9 +42,13 @@ def parse_fit_from_bytes(
     """
     from io import BytesIO
 
-    ff = FitFile(BytesIO(data))
-
-    return parse_fit(ff, name=name, strict=strict)
+    try:
+        ff = FitFile(BytesIO(data))
+        return parse_fit(ff, name=name, strict=strict)
+    except (InvalidWorkoutError, UnsupportedWorkoutFeatureError):
+        raise
+    except (FitParseError, ValidationError, ValueError, TypeError) as error:
+        raise InvalidWorkoutError("Invalid embedded FIT workout") from error
 
 
 def parse_fit_from_file(path: Path, *, strict: bool = True) -> Workout:
@@ -401,8 +406,11 @@ def parse_fit(
             }
         )
 
-    return Workout(
+    workout = Workout(
         name=name,
         instructions=[record["instruction"] for record in records],
         diagnostics=diagnostics,
     )
+    if not workout.instructions and not (not strict and workout.diagnostics):
+        raise InvalidWorkoutError("Workout contains no usable instructions")
+    return workout

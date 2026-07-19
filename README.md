@@ -52,6 +52,12 @@ strict mode. In permissive mode, unsupported target instructions are omitted and
 reported; steps with unsupported durations cannot be represented and are
 therefore omitted with a diagnostic.
 
+`load_workout()` exposes a stable `WorkoutParserError` hierarchy:
+`WorkoutFileError`, `UnsupportedFormatError`, `InvalidWorkoutError`, and
+`UnsupportedWorkoutFeatureError`. The CLI prints these errors without a
+traceback and exits with status 1; command-line usage errors retain argparse's
+status 2.
+
 ## Data Model
 
 ### `Workout`

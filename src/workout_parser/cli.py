@@ -14,6 +14,7 @@ from workout_parser import (
     RangeTarget,
     TimeDuration,
     Workout,
+    WorkoutParserError,
     load_workout,
 )
 
@@ -160,10 +161,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    path: Path = args.file
-    if not path.exists():
-        print(f"Error: file not found: {path}", file=sys.stderr)
-        sys.exit(1)
-
-    workout = load_workout(path)
+    try:
+        workout = load_workout(args.file)
+    except WorkoutParserError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(1) from None
     print(_dump_workout(workout, json_out=args.json_out))

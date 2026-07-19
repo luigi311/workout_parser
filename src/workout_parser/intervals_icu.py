@@ -1,5 +1,6 @@
 from __future__ import annotations
 import base64
+import binascii
 from datetime import date
 from math import floor
 from pathlib import Path
@@ -15,7 +16,11 @@ from workout_parser.models import (
     Workout,
     WorkoutStep,
 )
-from workout_parser.errors import InvalidWorkoutError, UnsupportedWorkoutFeatureError
+from workout_parser.errors import (
+    InvalidWorkoutError,
+    UnsupportedFormatError,
+    UnsupportedWorkoutFeatureError,
+)
 
 import json
 
@@ -30,7 +35,7 @@ def _coerce_float(v, default: float | None = None) -> float | None:
         if v is None:
             return default
         return float(v)
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 
@@ -314,36 +319,43 @@ def parse_intervals_icu_json(
     data: dict, path: Path, *, strict: bool = True
 ) -> Workout:
     """Parse Intervals.icu exported workout JSON (running/cycling)."""
+    if not isinstance(data, dict):
+        raise InvalidWorkoutError("Intervals.icu JSON root must be an object")
 
     name = data.get("name") or path.stem
 
     # Check if the json is in the Intervals.icu API format with a base64-encoded workout file; if so, decode and parse that instead of the JSON steps
     if "workout_filename" in data and "workout_file_base64" in data:
         filename = data["workout_filename"]
+        if not isinstance(filename, str) or not filename:
+            raise InvalidWorkoutError(
+                "Intervals.icu API wrapper has an invalid workout filename"
+            )
         try:
             decoded_bytes = base64.b64decode(data["workout_file_base64"])
-        except Exception as e:
-            raise ValueError(f"Failed to decode Intervals.icu API workout JSON: {e}")
+        except (TypeError, ValueError, binascii.Error) as error:
+            raise InvalidWorkoutError(
+                "Failed to decode Intervals.icu API workout payload"
+            ) from error
 
-        if filename.endswith(".json"):
+        embedded_suffix = Path(filename).suffix.lower()
+        if embedded_suffix == ".json":
             try:
                 decoded_data = json.loads(decoded_bytes)
-                workout = parse_intervals_icu_json(decoded_data, path, strict=strict)
-            except (InvalidWorkoutError, UnsupportedWorkoutFeatureError):
-                raise
-            except Exception as e:
-                raise ValueError(
-                    f"Failed to parse decoded Intervals.icu workout JSON: {e}"
-                )
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise InvalidWorkoutError(
+                    "Failed to parse embedded Intervals.icu workout JSON"
+                ) from error
+            workout = parse_intervals_icu_json(decoded_data, path, strict=strict)
 
-        elif filename.endswith(".fit"):
+        elif embedded_suffix == ".fit":
             # If its a .fit file then call the fit parser on the decoded bytes
             from workout_parser.fit import parse_fit_from_bytes
 
             workout = parse_fit_from_bytes(decoded_bytes, name=name, strict=strict)
         else:
-            raise ValueError(
-                f"Unsupported workout file type in Intervals.icu API JSON: {filename}"
+            raise UnsupportedFormatError(
+                f"Unsupported embedded workout format: {filename}"
             )
 
         updates = {
@@ -358,11 +370,13 @@ def parse_intervals_icu_json(
                 updates["workout_date"] = date.fromisoformat(
                     workout_date_str.split("T")[0]
                 )
-            except Exception:
+            except ValueError:
                 pass  # Ignore date parsing errors and leave workout_date as None
         return workout.model_copy(update=updates, deep=True)
 
     steps_in = data.get("steps") or []
+    if not isinstance(steps_in, list):
+        raise InvalidWorkoutError("Intervals.icu steps must be a list")
     instructions, diagnostics = _parse_icu_instructions(steps_in, strict=strict)
     source_ftp_watts = _coerce_float(data.get("ftp"))
     _validate_resolved_power_targets(
@@ -372,12 +386,15 @@ def parse_intervals_icu_json(
         diagnostics=diagnostics,
     )
 
-    return Workout(
+    workout = Workout(
         name=name,
         source_ftp_watts=source_ftp_watts,
         instructions=instructions,
         diagnostics=diagnostics,
     )
+    if not workout.instructions and not (not strict and workout.diagnostics):
+        raise InvalidWorkoutError("Workout contains no usable instructions")
+    return workout
 
 
 def parse_intervals_icu_json_file(path: Path, *, strict: bool = True) -> Workout:
