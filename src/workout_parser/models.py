@@ -2,41 +2,60 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import date
-from math import floor
-from pydantic import BaseModel, Field
+from math import floor, isfinite
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 
-class PointTarget(BaseModel):
-    value: int | float
+FiniteNonNegative = Annotated[
+    int | float, Field(ge=0, allow_inf_nan=False)
+]
+FinitePositive = Annotated[int | float, Field(gt=0, allow_inf_nan=False)]
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class RangeTarget(BaseModel):
-    low: int | float
-    high: int | float
+class _ImmutableModel(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+
+class PointTarget(_ImmutableModel):
+    value: FiniteNonNegative
+
+
+class RangeTarget(_ImmutableModel):
+    low: FiniteNonNegative
+    high: FiniteNonNegative
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "RangeTarget":
+        if self.low > self.high:
+            raise ValueError("range low must not exceed high")
+        return self
 
     @property
     def mid(self) -> float:
         return (self.low + self.high) / 2
 
 
-class RampTarget(BaseModel):
-    start: int | float
-    end: int | float
+class RampTarget(_ImmutableModel):
+    start: FiniteNonNegative
+    end: FiniteNonNegative
 
 
-class TimeDuration(BaseModel):
-    seconds: float
+class TimeDuration(_ImmutableModel):
+    seconds: FinitePositive
 
 
-class DistanceDuration(BaseModel):
-    meters: float
+class DistanceDuration(_ImmutableModel):
+    meters: FinitePositive
 
 
-class OpenDuration(BaseModel):
-    event: str = "lap_button"
+class OpenDuration(_ImmutableModel):
+    event: NonEmptyString = "lap_button"
 
 
-class ParseDiagnostic(BaseModel):
+class ParseDiagnostic(_ImmutableModel):
     code: str
     message: str
     step_index: int | None = None
@@ -62,7 +81,7 @@ def _scale_target(
     return RampTarget(start=scale(target.start), end=scale(target.end))
 
 
-class WorkoutStep(BaseModel):
+class WorkoutStep(_ImmutableModel):
     text: str | None = None
     duration: TimeDuration | DistanceDuration | OpenDuration
 
@@ -79,50 +98,60 @@ class WorkoutStep(BaseModel):
     cadence_rpm: PointTarget | RangeTarget | RampTarget | None = None
     cadence_zone: PointTarget | RangeTarget | RampTarget | None = None
 
-    model_config = {"frozen": False}
-
     @property
     def duration_s(self) -> float | None:
         if isinstance(self.duration, TimeDuration):
             return self.duration.seconds
         return None
 
-    def generate_absolute_power_targets_from_percent(self, ftp_watts: int) -> None:
-        """Resolve the percent-FTP target while preserving its target shape."""
+    def resolve_power_targets(self, ftp_watts: int | float) -> "WorkoutStep":
+        """Return a copy resolved against an externally supplied FTP."""
+        if not isfinite(float(ftp_watts)) or ftp_watts <= 0:
+            raise ValueError("ftp_watts must be finite and greater than zero")
+        power_watts = self.power_watts
         if self.power_percent_ftp is not None:
-            self.power_watts = _scale_target(
+            power_watts = _scale_target(
                 self.power_percent_ftp,
                 float(ftp_watts) / 100.0,
                 integer=True,
             )
+        return self.model_copy(update={"power_watts": power_watts}, deep=True)
 
-    def generate_pace_targets_from_percent(self, threshold_speed_mps: float) -> None:
-        """Resolve the percent-threshold target while preserving its target shape."""
+    def resolve_pace_targets(
+        self, threshold_speed_mps: int | float
+    ) -> "WorkoutStep":
+        """Return a copy resolved against an externally supplied threshold pace."""
+        if not isfinite(float(threshold_speed_mps)) or threshold_speed_mps <= 0:
+            raise ValueError(
+                "threshold_speed_mps must be finite and greater than zero"
+            )
+        speed_mps = self.speed_mps
         if self.speed_percent_threshold is not None:
-            self.speed_mps = _scale_target(
+            speed_mps = _scale_target(
                 self.speed_percent_threshold,
                 float(threshold_speed_mps) / 100.0,
                 integer=False,
             )
+        return self.model_copy(update={"speed_mps": speed_mps}, deep=True)
 
 
-class RepeatBlock(BaseModel):
+class RepeatBlock(_ImmutableModel):
     repetitions: int = Field(gt=0, strict=True)
-    instructions: list[WorkoutStep | RepeatBlock] = Field(default_factory=list)
+    instructions: tuple[WorkoutStep | RepeatBlock, ...] = ()
 
 
-class Workout(BaseModel):
+class Workout(_ImmutableModel):
     name: str
     description: str | None = None
     workout_date: date | None = None
-    source_ftp_watts: int | float | None = None
-    diagnostics: list[ParseDiagnostic] = Field(default_factory=list)
+    source_ftp_watts: FinitePositive | None = None
+    diagnostics: tuple[ParseDiagnostic, ...] = ()
 
-    instructions: list[WorkoutStep | RepeatBlock] = Field(default_factory=list)
+    instructions: tuple[WorkoutStep | RepeatBlock, ...] = ()
 
     def _iter_steps(self) -> Iterator[WorkoutStep]:
         def walk(
-            instructions: list[WorkoutStep | RepeatBlock],
+            instructions: tuple[WorkoutStep | RepeatBlock, ...],
         ) -> Iterator[WorkoutStep]:
             for instruction in instructions:
                 if isinstance(instruction, WorkoutStep):
@@ -148,6 +177,8 @@ class Workout(BaseModel):
 
     def get_step_at(self, t_s: float) -> tuple[int | None, WorkoutStep | None]:
         """Returns the WorkoutStep active at time t_s into the workout."""
+        if not isfinite(float(t_s)) or t_s < 0:
+            raise ValueError("t_s must be finite and non-negative")
         elapsed = 0.0
         for idx, step in enumerate(self._iter_steps()):
             duration_s = step.duration_s

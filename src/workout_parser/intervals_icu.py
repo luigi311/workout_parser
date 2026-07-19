@@ -349,21 +349,21 @@ def parse_intervals_icu_json(
                 f"Unsupported workout file type in Intervals.icu API JSON: {filename}"
             )
 
-        # Parse out the name from the original JSON if available, otherwise use the filename stem
-        workout.name = data.get("name") or Path(filename).stem
-        # Parse out the description from the original JSON if available
-        workout.description = data.get("description")
+        updates = {
+            "name": data.get("name") or Path(filename).stem,
+            "description": data.get("description"),
+        }
         # Parse out the workout date from the original JSON if available
         workout_date_str = data.get("start_date_local")
         if workout_date_str:
             try:
                 # Parse out the date from 2026-04-07T08:00:00
-                workout.workout_date = date.fromisoformat(
+                updates["workout_date"] = date.fromisoformat(
                     workout_date_str.split("T")[0]
                 )
             except Exception:
                 pass  # Ignore date parsing errors and leave workout_date as None
-        return workout
+        return workout.model_copy(update=updates, deep=True)
 
     steps_in = data.get("steps") or []
     instructions, diagnostics = _parse_icu_instructions(steps_in, strict=strict)

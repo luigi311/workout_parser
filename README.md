@@ -61,14 +61,20 @@ therefore omitted with a diagnostic.
 | `name` | `str` | Workout name |
 | `workout_date` | `date \| None` | Optional date |
 | `source_ftp_watts` | `int \| float \| None` | Historical FTP used for source-resolved watts |
-| `instructions` | `list[WorkoutStep \| RepeatBlock]` | Canonical recursive workout structure |
+| `instructions` | `tuple[WorkoutStep \| RepeatBlock, ...]` | Canonical recursive workout structure |
 | `expanded_steps()` | `list[WorkoutStep]` | Independent deep-copied execution steps |
 | `total_seconds` | `float` | Sum of all step durations (property) |
 
 Repeats remain canonical `RepeatBlock` instructions with a positive
 `repetitions` count and recursively nested `instructions`. Call
 `expanded_steps()` only when a flat execution sequence is needed; every
-occurrence is a deep copy and can be modified independently.
+occurrence is an independent immutable deep copy.
+
+Canonical workout, instruction, duration, and target models are immutable.
+Durations and reference values must be finite and positive; targets must be
+finite and non-negative; ranges require `low <= high`; and ramps may progress in
+either direction. Resolution methods return new steps instead of changing their
+source step.
 
 ### `WorkoutStep`
 
@@ -96,16 +102,16 @@ therefore preserved and point targets do not acquire a synthetic display band.
 To resolve percent targets into absolute values after construction:
 
 ```python
-step.generate_absolute_power_targets_from_percent(ftp_watts=250)
-step.generate_pace_targets_from_percent(threshold_speed_mps=3.5)
+resolved_power_step = step.resolve_power_targets(ftp_watts=250)
+resolved_pace_step = step.resolve_pace_targets(threshold_speed_mps=3.5)
 ```
 
 When an Intervals.icu export contains both `%FTP` and resolved watts, both are
 preserved. `source_ftp_watts` records the historical FTP used by the export; it
 is not treated as the athlete's current FTP. Applications can supply a current
-value to `generate_absolute_power_targets_from_percent()`, which replaces the
-resolved `power_watts` target while retaining the portable
-`power_percent_ftp` instruction.
+value to `resolve_power_targets()`, which returns a new immutable step with a
+replaced `power_watts` target while retaining the portable `power_percent_ftp`
+instruction. The original step remains unchanged.
 
 ## Running Tests
 

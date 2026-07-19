@@ -5,6 +5,7 @@ from itertools import combinations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from workout_parser import (
     DistanceDuration,
     InvalidWorkoutError,
@@ -174,7 +175,7 @@ def test_unsupported_duration_is_strict_or_diagnostic() -> None:
     workout = parse_intervals_icu_json(
         data, Path("calories.json"), strict=False
     )
-    assert workout.instructions == []
+    assert workout.instructions == ()
     assert workout.diagnostics[0].code == "unsupported_feature"
 
 
@@ -264,9 +265,11 @@ def test_json_preserves_relative_and_resolved_power() -> None:
     assert step.power_percent_ftp == PointTarget(value=105)
     assert step.power_watts == RangeTarget(low=168, high=178)
 
-    step.generate_absolute_power_targets_from_percent(ftp_watts=250)
+    resolved = step.resolve_power_targets(ftp_watts=250)
     assert step.power_percent_ftp == PointTarget(value=105)
-    assert step.power_watts == PointTarget(value=262)
+    assert step.power_watts == RangeTarget(low=168, high=178)
+    assert resolved.power_percent_ftp == PointTarget(value=105)
+    assert resolved.power_watts == PointTarget(value=262)
 
 
 def test_conflicting_resolved_power_is_strict_or_diagnostic() -> None:
@@ -330,8 +333,7 @@ def test_json_preserves_nested_repeat_structure() -> None:
         "surge",
         "surge",
     ]
-    expanded[0].text = "changed"
-    assert expanded[4].text == "work"
+    assert expanded[0] is not expanded[4]
 
 
 @pytest.mark.parametrize("repetitions", [0, -1, 1.5, None, True])
@@ -348,7 +350,7 @@ def test_json_rejects_invalid_repeat_counts(repetitions) -> None:
     workout = parse_intervals_icu_json(
         data, Path("invalid-repeat.json"), strict=False
     )
-    assert workout.instructions == []
+    assert workout.instructions == ()
     assert workout.diagnostics[0].code == "invalid_repeat"
 
 
@@ -424,3 +426,70 @@ def test_fit_rejects_invalid_repeat_reference() -> None:
 
     with pytest.raises(InvalidWorkoutError):
         parse_fit(fit_file)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: TimeDuration(seconds=0),
+        lambda: TimeDuration(seconds=-1),
+        lambda: TimeDuration(seconds=math.nan),
+        lambda: DistanceDuration(meters=math.inf),
+        lambda: PointTarget(value=-1),
+        lambda: PointTarget(value=math.nan),
+        lambda: RangeTarget(low=100, high=50),
+    ],
+)
+def test_models_reject_impossible_numeric_state(factory) -> None:
+    with pytest.raises(ValidationError):
+        factory()
+
+
+def test_models_are_deeply_immutable() -> None:
+    step = parse_intervals_icu_json(
+        {"steps": [{"duration": 60}]}, Path("immutable.json")
+    ).instructions[0]
+    assert not isinstance(step, RepeatBlock)
+    workout = parse_intervals_icu_json(
+        {"steps": [{"duration": 60}]}, Path("immutable.json")
+    )
+
+    with pytest.raises(ValidationError):
+        step.text = "changed"
+    with pytest.raises(ValidationError):
+        workout.instructions = ()
+
+
+def test_resolution_returns_new_step_and_validates_reference() -> None:
+    step = parse_intervals_icu_json(
+        {
+            "steps": [
+                {
+                    "duration": 60,
+                    "power": {"value": 100, "units": "%ftp"},
+                }
+            ]
+        },
+        Path("resolve.json"),
+    ).instructions[0]
+    assert not isinstance(step, RepeatBlock)
+
+    resolved = step.resolve_power_targets(250)
+    assert step.power_watts is None
+    assert resolved.power_watts == PointTarget(value=250)
+    with pytest.raises(ValueError):
+        step.resolve_power_targets(0)
+    with pytest.raises(ValueError):
+        step.resolve_pace_targets(math.nan)
+
+
+def test_timeline_rejects_invalid_queries_and_excludes_exact_end() -> None:
+    workout = parse_intervals_icu_json(
+        {"steps": [{"duration": 60}]}, Path("timeline.json")
+    )
+
+    for timestamp in (-1, math.nan, math.inf):
+        with pytest.raises(ValueError):
+            workout.get_step_at(timestamp)
+    assert workout.get_step_at(0)[0] == 0
+    assert workout.get_step_at(60) == (None, None)
