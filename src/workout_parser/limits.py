@@ -1,0 +1,8 @@
+"""Fixed resource budgets for workout parsing and expansion."""
+
+MAX_SOURCE_BYTES = 2 * 1024 * 1024
+MAX_DECODED_BYTES = 2 * 1024 * 1024
+MAX_NESTING_DEPTH = 8
+MAX_REPETITIONS = 100
+MAX_EXPANDED_STEPS = 10_000
+MAX_TIMED_DURATION_SECONDS = 7 * 24 * 60 * 60

@@ -54,9 +54,22 @@ therefore omitted with a diagnostic.
 
 `load_workout()` exposes a stable `WorkoutParserError` hierarchy:
 `WorkoutFileError`, `UnsupportedFormatError`, `InvalidWorkoutError`, and
-`UnsupportedWorkoutFeatureError`. The CLI prints these errors without a
-traceback and exits with status 1; command-line usage errors retain argparse's
-status 2.
+`UnsupportedWorkoutFeatureError`. `WorkoutLimitError` identifies inputs that
+exceed a resource budget. The CLI prints these errors without a traceback and
+exits with status 1; command-line usage errors retain argparse's status 2.
+
+## Resource limits
+
+Parsing and model expansion enforce fixed workout-oriented safety budgets:
+
+- Source files and decoded embedded payloads: 2 MiB each
+- Nested repeat depth: 8 levels
+- Repetitions per block: 100
+- Expanded workout size: 10,000 steps
+- Total timed duration: 7 days
+
+Base64 wrapper payloads must use strict base64 encoding. Exceeding any budget
+raises `WorkoutLimitError`; permissive parsing does not bypass safety limits.
 
 ## Data Model
 

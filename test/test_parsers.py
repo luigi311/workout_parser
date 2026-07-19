@@ -21,11 +21,15 @@ from workout_parser import (
     UnsupportedFormatError,
     UnsupportedWorkoutFeatureError,
     WorkoutFileError,
+    WorkoutLimitError,
+    Workout,
+    WorkoutStep,
     load_workout,
 )
 from workout_parser.intervals_icu import parse_intervals_icu_json
 from workout_parser.fit import parse_fit
 from workout_parser.cli import main as cli_main
+from workout_parser.limits import MAX_DECODED_BYTES, MAX_SOURCE_BYTES
 
 HERE = Path(__file__).parent
 DATA = HERE / "data"
@@ -643,6 +647,96 @@ def test_loader_rejects_invalid_paths_formats_and_empty_files(tmp_path) -> None:
         load_workout(unsupported)
     with pytest.raises(InvalidWorkoutError):
         load_workout(empty)
+
+
+def test_loader_rejects_oversized_source(tmp_path) -> None:
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b" " * (MAX_SOURCE_BYTES + 1))
+
+    with pytest.raises(WorkoutLimitError, match="source exceeds"):
+        load_workout(oversized)
+
+
+def test_wrapper_enforces_strict_base64_and_decoded_size() -> None:
+    wrapper = {
+        "workout_filename": "embedded.json",
+        "workout_file_base64": "not valid base64!",
+    }
+    with pytest.raises(InvalidWorkoutError, match="decode"):
+        parse_intervals_icu_json(wrapper, Path("wrapper.json"))
+
+    wrapper["workout_file_base64"] = base64.b64encode(
+        b" " * (MAX_DECODED_BYTES + 1)
+    ).decode()
+    with pytest.raises(WorkoutLimitError, match="Embedded workout exceeds"):
+        parse_intervals_icu_json(wrapper, Path("wrapper.json"))
+
+
+def test_models_enforce_structure_and_expansion_budgets() -> None:
+    step = WorkoutStep(duration=TimeDuration(seconds=1))
+
+    with pytest.raises(WorkoutLimitError, match="Repeat count"):
+        RepeatBlock(repetitions=101, instructions=(step,))
+
+    instruction = step
+    for _ in range(9):
+        instruction = RepeatBlock(repetitions=1, instructions=(instruction,))
+    with pytest.raises(WorkoutLimitError, match="nesting"):
+        Workout(name="nested", instructions=(instruction,))
+
+    expanded = RepeatBlock(
+        repetitions=100,
+        instructions=(
+            RepeatBlock(
+                repetitions=100,
+                instructions=(RepeatBlock(repetitions=2, instructions=(step,)),),
+            ),
+        ),
+    )
+    with pytest.raises(WorkoutLimitError, match="expands"):
+        Workout(name="expanded", instructions=(expanded,))
+
+    with pytest.raises(WorkoutLimitError, match="duration"):
+        Workout(
+            name="long",
+            instructions=(
+                WorkoutStep(duration=TimeDuration(seconds=7 * 24 * 60 * 60 + 1)),
+            ),
+        )
+
+
+def test_parsers_enforce_repeat_and_nesting_budgets() -> None:
+    with pytest.raises(WorkoutLimitError, match="Repeat count"):
+        parse_intervals_icu_json(
+            {"steps": [{"reps": 101, "steps": [{"duration": 1}]}]},
+            Path("repeat.json"),
+        )
+
+    nested = {"duration": 1}
+    for _ in range(9):
+        nested = {"reps": 1, "steps": [nested]}
+    with pytest.raises(WorkoutLimitError, match="nesting"):
+        parse_intervals_icu_json(
+            {"steps": [nested]}, Path("nested.json")
+        )
+
+    with pytest.raises(WorkoutLimitError, match="FIT repeat count"):
+        parse_fit(
+            _FitFile(
+                _FitMessage(
+                    message_index=0,
+                    duration_type="time",
+                    duration_time=1,
+                    target_type="open",
+                ),
+                _FitMessage(
+                    message_index=1,
+                    duration_type="repeat_until_steps_cmplt",
+                    duration_step=0,
+                    repeat_steps=101,
+                ),
+            )
+        )
 
 
 def test_loader_preserves_malformed_source_as_error_cause(tmp_path) -> None:

@@ -4,6 +4,7 @@ from workout_parser.errors import (
     UnsupportedFormatError,
     UnsupportedWorkoutFeatureError,
     WorkoutFileError,
+    WorkoutLimitError,
     WorkoutParserError,
 )
 from workout_parser.models import (

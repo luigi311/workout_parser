@@ -20,6 +20,13 @@ from workout_parser.errors import (
     InvalidWorkoutError,
     UnsupportedFormatError,
     UnsupportedWorkoutFeatureError,
+    WorkoutLimitError,
+)
+from workout_parser.limits import (
+    MAX_DECODED_BYTES,
+    MAX_NESTING_DEPTH,
+    MAX_REPETITIONS,
+    MAX_SOURCE_BYTES,
 )
 from workout_parser.metadata import normalize_sport
 
@@ -182,13 +189,19 @@ def _parse_icu_instructions(
             raise UnsupportedWorkoutFeatureError(message)
         diagnostics.append(diagnostic)
 
-    def handle_step(node: dict) -> WorkoutStep | RepeatBlock | None:
+    def handle_step(
+        node: dict, depth: int = 0
+    ) -> WorkoutStep | RepeatBlock | None:
         nonlocal source_index
         step_index = source_index
         source_index += 1
 
         # If it declares repeat structure, validate the whole block.
         if "reps" in node or "steps" in node:
+            if depth >= MAX_NESTING_DEPTH:
+                raise WorkoutLimitError(
+                    f"Workout nesting exceeds {MAX_NESTING_DEPTH} repeat levels"
+                )
             if not isinstance(node.get("steps"), list):
                 invalid_repeat("Repeat block must contain a steps list", step_index)
                 return None
@@ -203,10 +216,19 @@ def _parse_icu_instructions(
                     step_index,
                 )
                 return None
+            if repetitions > MAX_REPETITIONS:
+                raise WorkoutLimitError(
+                    f"Repeat count exceeds {MAX_REPETITIONS} at step {step_index}"
+                )
 
             nested: list[WorkoutStep | RepeatBlock] = []
             for sub in node["steps"]:
-                instruction = handle_step(sub)
+                if not isinstance(sub, dict):
+                    invalid_repeat(
+                        "Repeat block steps must be objects", step_index
+                    )
+                    continue
+                instruction = handle_step(sub, depth + 1)
                 if instruction is not None:
                     nested.append(instruction)
             if not nested:
@@ -330,6 +352,8 @@ def _parse_icu_instructions(
         return step
 
     for s in steps:
+        if not isinstance(s, dict):
+            raise InvalidWorkoutError("Intervals.icu steps must contain objects")
         instruction = handle_step(s)
         if instruction is not None:
             instructions.append(instruction)
@@ -352,12 +376,25 @@ def parse_intervals_icu_json(
             raise InvalidWorkoutError(
                 "Intervals.icu API wrapper has an invalid workout filename"
             )
+        encoded_payload = data["workout_file_base64"]
+        if not isinstance(encoded_payload, str):
+            raise InvalidWorkoutError(
+                "Intervals.icu API workout payload must be base64 text"
+            )
+        if len(encoded_payload) > ((MAX_DECODED_BYTES + 2) // 3) * 4:
+            raise WorkoutLimitError(
+                f"Embedded workout exceeds {MAX_DECODED_BYTES} decoded bytes"
+            )
         try:
-            decoded_bytes = base64.b64decode(data["workout_file_base64"])
+            decoded_bytes = base64.b64decode(encoded_payload, validate=True)
         except (TypeError, ValueError, binascii.Error) as error:
             raise InvalidWorkoutError(
                 "Failed to decode Intervals.icu API workout payload"
             ) from error
+        if len(decoded_bytes) > MAX_DECODED_BYTES:
+            raise WorkoutLimitError(
+                f"Embedded workout exceeds {MAX_DECODED_BYTES} decoded bytes"
+            )
 
         embedded_suffix = Path(filename).suffix.lower()
         if embedded_suffix == ".json":
@@ -438,6 +475,10 @@ def parse_intervals_icu_json(
 
 def parse_intervals_icu_json_file(path: Path, *, strict: bool = True) -> Workout:
     """Parse Intervals.icu exported workout JSON (running/cycling)."""
+    if path.stat().st_size > MAX_SOURCE_BYTES:
+        raise WorkoutLimitError(
+            f"Workout source exceeds {MAX_SOURCE_BYTES} bytes: {path}"
+        )
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 

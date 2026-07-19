@@ -14,5 +14,9 @@ class InvalidWorkoutError(WorkoutParserError):
     """Raised when source workout fields contradict one another."""
 
 
+class WorkoutLimitError(WorkoutParserError):
+    """Raised when a workout exceeds a parsing or expansion budget."""
+
+
 class UnsupportedWorkoutFeatureError(WorkoutParserError):
     """Raised when strict parsing encounters an unsupported workout construct."""

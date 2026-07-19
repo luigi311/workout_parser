@@ -7,6 +7,14 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from workout_parser.errors import WorkoutLimitError
+from workout_parser.limits import (
+    MAX_EXPANDED_STEPS,
+    MAX_NESTING_DEPTH,
+    MAX_REPETITIONS,
+    MAX_TIMED_DURATION_SECONDS,
+)
+
 
 FiniteNonNegative = Annotated[
     int | float, Field(ge=0, allow_inf_nan=False)
@@ -144,6 +152,14 @@ class RepeatBlock(_ImmutableModel):
     repetitions: int = Field(gt=0, strict=True)
     instructions: tuple[WorkoutStep | RepeatBlock, ...] = ()
 
+    @model_validator(mode="after")
+    def validate_repetition_budget(self) -> "RepeatBlock":
+        if self.repetitions > MAX_REPETITIONS:
+            raise WorkoutLimitError(
+                f"Repeat count exceeds {MAX_REPETITIONS}"
+            )
+        return self
+
 
 class Workout(_ImmutableModel):
     name: str
@@ -154,6 +170,39 @@ class Workout(_ImmutableModel):
     diagnostics: tuple[ParseDiagnostic, ...] = ()
 
     instructions: tuple[WorkoutStep | RepeatBlock, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_resource_budget(self) -> "Workout":
+        expanded_steps = 0
+        timed_seconds = 0.0
+        stack = [(instruction, 1, 0) for instruction in self.instructions]
+        while stack:
+            instruction, multiplier, depth = stack.pop()
+            if isinstance(instruction, RepeatBlock):
+                nested_depth = depth + 1
+                if nested_depth > MAX_NESTING_DEPTH:
+                    raise WorkoutLimitError(
+                        f"Workout nesting exceeds {MAX_NESTING_DEPTH} repeat levels"
+                    )
+                nested_multiplier = multiplier * instruction.repetitions
+                stack.extend(
+                    (nested, nested_multiplier, nested_depth)
+                    for nested in instruction.instructions
+                )
+                continue
+
+            expanded_steps += multiplier
+            if expanded_steps > MAX_EXPANDED_STEPS:
+                raise WorkoutLimitError(
+                    f"Workout expands beyond {MAX_EXPANDED_STEPS} steps"
+                )
+            if isinstance(instruction.duration, TimeDuration):
+                timed_seconds += instruction.duration.seconds * multiplier
+                if timed_seconds > MAX_TIMED_DURATION_SECONDS:
+                    raise WorkoutLimitError(
+                        "Workout timed duration exceeds 7 days"
+                    )
+        return self
 
     def _iter_steps(self) -> Iterator[WorkoutStep]:
         def walk(

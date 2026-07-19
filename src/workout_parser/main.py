@@ -6,8 +6,10 @@ from workout_parser.errors import (
     InvalidWorkoutError,
     UnsupportedFormatError,
     WorkoutFileError,
+    WorkoutLimitError,
     WorkoutParserError,
 )
+from workout_parser.limits import MAX_SOURCE_BYTES
 from pathlib import Path
 import re
 
@@ -75,6 +77,10 @@ def load_workout(path: Path, *, strict: bool = True) -> Workout:
         raise WorkoutFileError(f"Workout file does not exist: {path}")
     if not path.is_file():
         raise WorkoutFileError(f"Workout path is not a regular file: {path}")
+    if path.stat().st_size > MAX_SOURCE_BYTES:
+        raise WorkoutLimitError(
+            f"Workout source exceeds {MAX_SOURCE_BYTES} bytes: {path}"
+        )
 
     ext = path.suffix.lower()
     if ext not in SUPPORTED_EXTS:

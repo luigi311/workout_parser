@@ -1,4 +1,13 @@
-from workout_parser.errors import InvalidWorkoutError, UnsupportedWorkoutFeatureError
+from workout_parser.errors import (
+    InvalidWorkoutError,
+    UnsupportedWorkoutFeatureError,
+    WorkoutLimitError,
+)
+from workout_parser.limits import (
+    MAX_DECODED_BYTES,
+    MAX_REPETITIONS,
+    MAX_SOURCE_BYTES,
+)
 from workout_parser.models import (
     DistanceDuration,
     OpenDuration,
@@ -119,6 +128,11 @@ def parse_fit_from_bytes(
     """
     from io import BytesIO
 
+    if len(data) > MAX_DECODED_BYTES:
+        raise WorkoutLimitError(
+            f"Embedded workout exceeds {MAX_DECODED_BYTES} decoded bytes"
+        )
+
     try:
         ff = FitFile(BytesIO(data))
         return parse_fit(
@@ -134,6 +148,10 @@ def parse_fit_from_file(path: Path, *, strict: bool = True) -> Workout:
     """
     Parse Intervals.icu-style FIT workouts including pace/power and repeat blocks.
     """
+    if path.stat().st_size > MAX_SOURCE_BYTES:
+        raise WorkoutLimitError(
+            f"Workout source exceeds {MAX_SOURCE_BYTES} bytes: {path}"
+        )
     ff = FitFile(str(path))
     return parse_fit(ff, fallback_name=path.stem, strict=strict)
 
@@ -225,6 +243,10 @@ def parse_fit(
                     f"FIT repeat count must be positive, got {reps}", msg_idx
                 )
                 continue
+            if reps > MAX_REPETITIONS:
+                raise WorkoutLimitError(
+                    f"FIT repeat count exceeds {MAX_REPETITIONS} at step {msg_idx}"
+                )
 
             entries.append(
                 {
