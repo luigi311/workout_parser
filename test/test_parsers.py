@@ -4,7 +4,7 @@ import base64
 import json
 import math
 from datetime import date
-from itertools import combinations
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -29,30 +29,66 @@ from workout_parser.cli import main as cli_main
 
 HERE = Path(__file__).parent
 DATA = HERE / "data"
-SUPPORTED = {".json", ".fit"}
 FTPS = [150, 200, 250]
 
 
-def discover_pairs() -> list[tuple[Path, Path]]:
-    by_stem: dict[str, list[Path]] = {}
-    for p in DATA.glob("*"):
-        if p.suffix.lower() in SUPPORTED and p.is_file():
-            by_stem.setdefault(p.stem, []).append(p)
+@dataclass(frozen=True)
+class FixtureCase:
+    stem: str
+    total_seconds: float
+    top_level_count: int
+    expanded_count: int
+    target_field: str
+    first_target: RangeTarget
+    target_tolerance: float
 
-    pairs: list[tuple[Path, Path]] = []
-    for files in by_stem.values():
-        jsons = [p for p in files if p.suffix.lower() == ".json"]
-        others = [p for p in files if p.suffix.lower() != ".json"]
-        if jsons and others:
-            pairs.extend((j, o) for j in jsons for o in others)
-        elif len(files) >= 2:
-            pairs.extend(combinations(files, 2))
-    return pairs
+    @property
+    def json_path(self) -> Path:
+        return DATA / f"{self.stem}.json"
+
+    @property
+    def fit_path(self) -> Path:
+        return DATA / f"{self.stem}.fit"
 
 
-PAIRS = discover_pairs()
-if not PAIRS:
-    raise SystemExit(f"No comparable file pairs found in {DATA}")
+FIXTURE_CASES = (
+    FixtureCase(
+        "1_Speed_Workout_Bike",
+        2820,
+        11,
+        20,
+        "power_watts",
+        RangeTarget(low=78, high=105),
+        1,
+    ),
+    FixtureCase(
+        "Aerobic_Speed_Endurance",
+        2100,
+        4,
+        22,
+        "speed_mps",
+        RangeTarget(low=1.262, high=1.404),
+        0.001,
+    ),
+    FixtureCase(
+        "Running_Power_Intervals_3x4m_Threshold_Cadence_Focus_",
+        2280,
+        3,
+        8,
+        "power_watts",
+        RangeTarget(low=96, high=102),
+        1,
+    ),
+    FixtureCase(
+        "Running_Power_Intervals_4x4m_Threshold",
+        2640,
+        3,
+        10,
+        "speed_mps",
+        RangeTarget(low=1.087, high=1.143),
+        0.001,
+    ),
+)
 
 
 def _close(a: float | None, b: float | None, tol: float) -> bool:
@@ -73,22 +109,103 @@ def _target_mid(target) -> float | None:
     return None
 
 
-@pytest.mark.parametrize("ftp", FTPS)
-@pytest.mark.parametrize("json_path,other_path", PAIRS, ids=lambda p: p.name)
-def test_parsers_agree(json_path: Path, other_path: Path, ftp: int) -> None:
-    w_a = load_workout(json_path)
-    w_b = load_workout(other_path)
+def _assert_targets_equal(a, b, tolerance: float) -> None:
+    assert (a is None) == (b is None)
+    if a is None:
+        return
+    assert type(a) is type(b)
+    assert a.model_dump().keys() == b.model_dump().keys()
+    for field, value in a.model_dump().items():
+        assert _close(value, b.model_dump()[field], tolerance)
+
+
+def _instruction_shape(instructions) -> tuple:
+    return tuple(
+        (
+            "repeat",
+            instruction.repetitions,
+            _instruction_shape(instruction.instructions),
+        )
+        if isinstance(instruction, RepeatBlock)
+        else ("step", type(instruction.duration).__name__)
+        for instruction in instructions
+    )
+
+
+@pytest.mark.parametrize("extension", ["json", "fit"])
+@pytest.mark.parametrize("case", FIXTURE_CASES, ids=lambda case: case.stem)
+def test_fixture_matches_semantic_oracle(
+    case: FixtureCase, extension: str
+) -> None:
+    workout = load_workout(DATA / f"{case.stem}.{extension}")
+    steps = workout.expanded_steps()
+
+    assert workout.total_seconds == case.total_seconds
+    assert len(workout.instructions) == case.top_level_count
+    assert len(steps) == case.expanded_count
+    assert workout.diagnostics == ()
+    target = getattr(steps[0], case.target_field)
+    _assert_targets_equal(target, case.first_target, case.target_tolerance)
+    assert all(getattr(step, case.target_field) is not None for step in steps)
+
+
+SHARED_TARGET_FIELDS = (
+    "power_watts",
+    "speed_mps",
+    "heart_rate_bpm",
+    "cadence_rpm",
+)
+
+
+@pytest.mark.parametrize("case", FIXTURE_CASES, ids=lambda case: case.stem)
+def test_parsers_agree_on_shared_canonical_fields(case: FixtureCase) -> None:
+    w_a = load_workout(case.json_path)
+    w_b = load_workout(case.fit_path)
     steps_a = w_a.expanded_steps()
     steps_b = w_b.expanded_steps()
 
-    assert len(steps_a) > 0, f"{json_path.name} yielded no steps"
-    assert len(steps_a) == len(steps_b), f"Step count mismatch: {len(steps_a)} vs {len(steps_b)}"
-    assert _close(w_a.total_seconds, w_b.total_seconds, 1.0), f"Total duration mismatch"
+    assert len(w_a.instructions) == len(w_b.instructions)
+    assert _instruction_shape(w_a.instructions) == _instruction_shape(
+        w_b.instructions
+    )
+    assert len(steps_a) == len(steps_b)
+    assert _close(w_a.total_seconds, w_b.total_seconds, 1.0)
+    assert w_a.diagnostics == w_b.diagnostics
 
     for i, (sa, sb) in enumerate(zip(steps_a, steps_b)):
-        assert _close(sa.duration_s, sb.duration_s, 0.5), f"Step {i} duration: {sa.duration_s} vs {sb.duration_s}"
-        assert _close(_target_mid(sa.power_watts), _target_mid(sb.power_watts), 1.0)
-        assert _close(_target_mid(sa.speed_mps), _target_mid(sb.speed_mps), 0.01)
+        assert type(sa.duration) is type(sb.duration), f"Step {i} duration kind"
+        assert _close(sa.duration_s, sb.duration_s, 0.5), f"Step {i} duration"
+        for field in SHARED_TARGET_FIELDS:
+            tolerance = 0.001 if field == "speed_mps" else 1.0
+            _assert_targets_equal(
+                getattr(sa, field), getattr(sb, field), tolerance
+            )
+
+
+FTP_FIXTURES = (
+    "1_Speed_Workout_Bike",
+    "Running_Power_Intervals_3x4m_Threshold_Cadence_Focus_",
+)
+
+
+@pytest.mark.parametrize("ftp", FTPS)
+@pytest.mark.parametrize("stem", FTP_FIXTURES)
+def test_external_ftp_resolves_every_relative_power_target(
+    stem: str, ftp: int
+) -> None:
+    workout = load_workout(DATA / f"{stem}.json")
+
+    for step in workout.expanded_steps():
+        relative = step.power_percent_ftp
+        assert relative is not None
+        resolved = step.resolve_power_targets(ftp)
+        assert resolved.power_percent_ftp == relative
+        assert resolved.power_watts is not None
+        assert type(resolved.power_watts) is type(relative)
+        for field, percent in relative.model_dump().items():
+            assert resolved.power_watts.model_dump()[field] == math.floor(
+                percent * ftp / 100
+            )
 
 
 # Test 30_Minute_Threshold_Test_New_Build_Phase_fit.json and 30_Minute_Threshold_Test_New_Build_Phase_json.json to make sure they match
