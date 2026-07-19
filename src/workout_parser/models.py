@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from collections.abc import Iterator
 from datetime import date
 from math import floor
 from pydantic import BaseModel, Field
@@ -103,6 +106,11 @@ class WorkoutStep(BaseModel):
             )
 
 
+class RepeatBlock(BaseModel):
+    repetitions: int = Field(gt=0, strict=True)
+    instructions: list[WorkoutStep | RepeatBlock] = Field(default_factory=list)
+
+
 class Workout(BaseModel):
     name: str
     description: str | None = None
@@ -110,19 +118,38 @@ class Workout(BaseModel):
     source_ftp_watts: int | float | None = None
     diagnostics: list[ParseDiagnostic] = Field(default_factory=list)
 
-    steps: list[WorkoutStep] = Field(default_factory=list)
+    instructions: list[WorkoutStep | RepeatBlock] = Field(default_factory=list)
+
+    def _iter_steps(self) -> Iterator[WorkoutStep]:
+        def walk(
+            instructions: list[WorkoutStep | RepeatBlock],
+        ) -> Iterator[WorkoutStep]:
+            for instruction in instructions:
+                if isinstance(instruction, WorkoutStep):
+                    yield instruction
+                else:
+                    for _ in range(instruction.repetitions):
+                        yield from walk(instruction.instructions)
+
+        yield from walk(self.instructions)
+
+    def expanded_steps(self) -> list[WorkoutStep]:
+        """Materialize the instruction tree as independent executable steps."""
+        return [step.model_copy(deep=True) for step in self._iter_steps()]
 
     @property
     def total_seconds(self) -> float | None:
-        durations = [s.duration_s for s in self.steps]
-        if any(duration is None for duration in durations):
-            return None
-        return sum(duration for duration in durations if duration is not None)
+        total = 0.0
+        for step in self._iter_steps():
+            if step.duration_s is None:
+                return None
+            total += step.duration_s
+        return total
 
     def get_step_at(self, t_s: float) -> tuple[int | None, WorkoutStep | None]:
         """Returns the WorkoutStep active at time t_s into the workout."""
         elapsed = 0.0
-        for idx, step in enumerate(self.steps):
+        for idx, step in enumerate(self._iter_steps()):
             duration_s = step.duration_s
             if duration_s is None:
                 return (None, None)

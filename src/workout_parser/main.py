@@ -67,7 +67,7 @@ def load_workout(path: Path, *, strict: bool = True) -> Workout:
         return parse_fit_from_file(path, strict=strict)
     if ext == ".json":
         return parse_intervals_icu_json_file(path, strict=strict)
-    return Workout(name=path.stem, steps=[])
+    return Workout(name=path.stem, instructions=[])
 
 
 # -----------------------

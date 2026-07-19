@@ -1,11 +1,12 @@
 from math import floor
-from workout_parser.errors import UnsupportedWorkoutFeatureError
+from workout_parser.errors import InvalidWorkoutError, UnsupportedWorkoutFeatureError
 from workout_parser.models import (
     DistanceDuration,
     OpenDuration,
     ParseDiagnostic,
     PointTarget,
     RangeTarget,
+    RepeatBlock,
     TimeDuration,
     Workout,
     WorkoutStep,
@@ -72,9 +73,25 @@ def parse_fit(
             )
         )
 
+    def invalid_repeat(message: str, step_index: int) -> None:
+        if strict:
+            raise InvalidWorkoutError(message)
+        diagnostics.append(
+            ParseDiagnostic(
+                code="invalid_repeat",
+                message=message,
+                step_index=step_index,
+            )
+        )
+
     for msg in ff.get_messages("workout_step"):
         fields = {f.name: f.value for f in msg}
-        msg_idx = int(fields.get("message_index") or len(entries))
+        raw_message_index = fields.get("message_index")
+        msg_idx = (
+            int(raw_message_index)
+            if raw_message_index is not None
+            else len(entries)
+        )
 
         dur_type = str(fields.get("duration_type") or "").lower()
 
@@ -85,11 +102,21 @@ def parse_fit(
                 repeat_steps = fields.get("repeat_steps")
 
                 if duration_step is None or repeat_steps is None:
+                    invalid_repeat(
+                        "FIT repeat marker is missing its start or count", msg_idx
+                    )
                     continue
 
                 start_index = int(duration_step)
                 reps = int(repeat_steps)
-            except Exception:
+            except (TypeError, ValueError):
+                invalid_repeat("FIT repeat marker has invalid numeric fields", msg_idx)
+                continue
+
+            if reps <= 0:
+                invalid_repeat(
+                    f"FIT repeat count must be positive, got {reps}", msg_idx
+                )
                 continue
 
             entries.append(
@@ -304,30 +331,78 @@ def parse_fit(
 
         entries.append({"type": "step", "message_index": msg_idx, "step": step})
 
-    # ---------- second pass: expand repeats ----------
+    # ---------- second pass: normalize repeat references into a tree ----------
     entries.sort(key=lambda e: e["message_index"])
-    final_steps: list[WorkoutStep] = []
+    unique_entries: list[dict] = []
+    seen_indices: set[int] = set()
+    for entry in entries:
+        message_index = int(entry["message_index"])
+        if message_index in seen_indices:
+            invalid_repeat(
+                f"Duplicate FIT workout-step index {message_index}", message_index
+            )
+            continue
+        seen_indices.add(message_index)
+        unique_entries.append(entry)
 
-    for e in entries:
+    records: list[dict] = []
+
+    for e in unique_entries:
         if e["type"] == "step":
-            final_steps.append(e["step"])
-        else:
-            start = int(e["start_index"])
-            end = int(e["message_index"])
-            reps = int(e["reps"])
-            # Collect the block of steps between start..end (message_index)
-            block: list[WorkoutStep] = []
-            for e2 in entries:
-                if e2["type"] != "step":
-                    continue
-                mi = int(e2["message_index"])
-                if start <= mi < end:
-                    block.append(e2["step"])
-            if not block or reps <= 1:
-                continue
-            # Append (reps-1) more copies
-            for _ in range(reps - 1):
-                for s in block:
-                    final_steps.append(WorkoutStep(**s.__dict__))
+            message_index = int(e["message_index"])
+            records.append(
+                {
+                    "start": message_index,
+                    "end": message_index,
+                    "instruction": e["step"],
+                }
+            )
+            continue
 
-    return Workout(name=name, steps=final_steps, diagnostics=diagnostics)
+        start = int(e["start_index"])
+        marker_index = int(e["message_index"])
+        repetitions = int(e["reps"])
+        block_position = next(
+            (
+                index
+                for index, record in enumerate(records)
+                if int(record["start"]) == start
+            ),
+            None,
+        )
+        block_records = (
+            records[block_position:] if block_position is not None else []
+        )
+        contiguous = bool(block_records) and int(block_records[-1]["end"]) == (
+            marker_index - 1
+        )
+        contiguous = contiguous and all(
+            int(right["start"]) == int(left["end"]) + 1
+            for left, right in zip(block_records, block_records[1:])
+        )
+        if not contiguous:
+            invalid_repeat(
+                f"FIT repeat at index {marker_index} does not reference a valid "
+                f"contiguous block starting at {start}",
+                marker_index,
+            )
+            continue
+
+        instructions = [record["instruction"] for record in block_records]
+        del records[block_position:]
+        records.append(
+            {
+                "start": start,
+                "end": marker_index,
+                "instruction": RepeatBlock(
+                    repetitions=repetitions,
+                    instructions=instructions,
+                ),
+            }
+        )
+
+    return Workout(
+        name=name,
+        instructions=[record["instruction"] for record in records],
+        diagnostics=diagnostics,
+    )

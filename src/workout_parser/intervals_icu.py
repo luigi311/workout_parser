@@ -9,6 +9,7 @@ from workout_parser.models import (
     PointTarget,
     RampTarget,
     RangeTarget,
+    RepeatBlock,
     TimeDuration,
     Workout,
     WorkoutStep,
@@ -81,7 +82,7 @@ def _power_comparison_pairs(
 
 
 def _validate_resolved_power_targets(
-    steps: list[WorkoutStep],
+    instructions: list[WorkoutStep | RepeatBlock],
     source_ftp_watts: int | float | None,
     *,
     strict: bool,
@@ -90,7 +91,16 @@ def _validate_resolved_power_targets(
     if source_ftp_watts is None:
         return
 
-    for step_index, step in enumerate(steps):
+    def walk(
+        nested: list[WorkoutStep | RepeatBlock],
+    ):
+        for instruction in nested:
+            if isinstance(instruction, WorkoutStep):
+                yield instruction
+            else:
+                yield from walk(instruction.instructions)
+
+    for step_index, step in enumerate(walk(instructions)):
         relative = step.power_percent_ftp
         absolute = step.power_watts
         if relative is None or absolute is None:
@@ -120,42 +130,76 @@ def _validate_resolved_power_targets(
         )
 
 
-def _flatten_icu_steps(
+def _parse_icu_instructions(
     steps: list[dict], *, strict: bool
-) -> tuple[list[WorkoutStep], list[ParseDiagnostic]]:
+) -> tuple[list[WorkoutStep | RepeatBlock], list[ParseDiagnostic]]:
     """
     Convert Intervals.icu 'steps' (which may include nested sets with 'reps')
     into a flat list of WorkoutStep, capturing explicit bands when present.
     """
-    flat: list[WorkoutStep] = []
+    instructions: list[WorkoutStep | RepeatBlock] = []
     diagnostics: list[ParseDiagnostic] = []
+    source_index = 0
 
-    def unsupported(message: str) -> None:
+    def invalid_repeat(message: str, step_index: int) -> None:
         diagnostic = ParseDiagnostic(
-            code="unsupported_feature",
+            code="invalid_repeat",
             message=message,
-            step_index=len(flat),
+            step_index=step_index,
+        )
+        if strict:
+            raise InvalidWorkoutError(message)
+        diagnostics.append(diagnostic)
+
+    def unsupported(message: str, step_index: int) -> None:
+        diagnostic = ParseDiagnostic(
+            code="unsupported_feature", message=message, step_index=step_index
         )
         if strict:
             raise UnsupportedWorkoutFeatureError(message)
         diagnostics.append(diagnostic)
 
-    def handle_step(node: dict, text: str | None = None):
-        # If it's a repeated block with 'reps'
-        if "reps" in node and isinstance(node.get("steps"), list):
-            reps = int(node.get("reps", 1) or 1)
-            for _ in range(max(1, reps)):
-                for sub in node["steps"]:
-                    sub_text = sub.get("text") or text
-                    handle_step(sub, text=sub_text)
-            return
+    def handle_step(
+        node: dict, text: str | None = None
+    ) -> WorkoutStep | RepeatBlock | None:
+        nonlocal source_index
+        step_index = source_index
+        source_index += 1
+
+        # If it declares repeat structure, validate the whole block.
+        if "reps" in node or "steps" in node:
+            if not isinstance(node.get("steps"), list):
+                invalid_repeat("Repeat block must contain a steps list", step_index)
+                return None
+            repetitions = node.get("reps")
+            if (
+                not isinstance(repetitions, int)
+                or isinstance(repetitions, bool)
+                or repetitions <= 0
+            ):
+                invalid_repeat(
+                    f"Repeat count must be a positive integer, got {repetitions!r}",
+                    step_index,
+                )
+                return None
+
+            nested: list[WorkoutStep | RepeatBlock] = []
+            for sub in node["steps"]:
+                sub_text = sub.get("text") or text
+                instruction = handle_step(sub, text=sub_text)
+                if instruction is not None:
+                    nested.append(instruction)
+            if not nested:
+                invalid_repeat("Repeat block cannot be empty", step_index)
+                return None
+            return RepeatBlock(repetitions=repetitions, instructions=nested)
 
         calories = _coerce_float(node.get("calories"))
         distance = _coerce_float(node.get("distance"))
         seconds = _coerce_float(node.get("duration"))
         if calories is not None and calories > 0:
-            unsupported("Calorie-based durations are not supported")
-            return
+            unsupported("Calorie-based durations are not supported", step_index)
+            return None
         if node.get("until_lap_press") is True:
             duration = OpenDuration()
         elif distance is not None and distance > 0:
@@ -163,8 +207,10 @@ def _flatten_icu_steps(
         elif seconds is not None and seconds > 0:
             duration = TimeDuration(seconds=seconds)
         else:
-            unsupported("Step has no supported time, distance, or open duration")
-            return
+            unsupported(
+                "Step has no supported time, distance, or open duration", step_index
+            )
+            return None
 
         ramp = node.get("ramp") is True
 
@@ -182,7 +228,9 @@ def _flatten_icu_steps(
             elif "zone" in units:
                 speed_zone = _target_from_icu(p_per_meta, ramp=ramp)
             elif speed_target is None:
-                unsupported(f"Unsupported pace units: {units or 'missing'}")
+                unsupported(
+                    f"Unsupported pace units: {units or 'missing'}", step_index
+                )
 
         # -------- Power parsing --------
         pw_abs_meta = node.get("_power")
@@ -198,7 +246,9 @@ def _flatten_icu_steps(
             elif "zone" in units:
                 power_zone = _target_from_icu(pw_per_meta, ramp=ramp)
             elif power_target is None:
-                unsupported(f"Unsupported power units: {units or 'missing'}")
+                unsupported(
+                    f"Unsupported power units: {units or 'missing'}", step_index
+                )
 
         # -------- Heart-rate parsing --------
         heart_rate_target = _target_from_icu(node.get("_hr"), ramp=ramp)
@@ -218,7 +268,10 @@ def _flatten_icu_steps(
             elif "max" in units and "%" in units:
                 heart_rate_percent_max = _target_from_icu(hr_meta, ramp=ramp)
             elif heart_rate_target is None:
-                unsupported(f"Unsupported heart-rate units: {units or 'missing'}")
+                unsupported(
+                    f"Unsupported heart-rate units: {units or 'missing'}",
+                    step_index,
+                )
 
         # -------- Cadence parsing --------
         cadence_target = _target_from_icu(node.get("_cadence"), ramp=ramp)
@@ -232,7 +285,7 @@ def _flatten_icu_steps(
                 if cadence_target is None:
                     cadence_target = _target_from_icu(cadence_meta, ramp=ramp)
             else:
-                unsupported(f"Unsupported cadence units: {units}")
+                unsupported(f"Unsupported cadence units: {units}", step_index)
 
         step = WorkoutStep(
             text=text,
@@ -250,12 +303,14 @@ def _flatten_icu_steps(
             cadence_rpm=cadence_target,
             cadence_zone=cadence_zone,
         )
-        flat.append(step)
+        return step
 
     for s in steps:
         text = s.get("text")
-        handle_step(s, text=text)
-    return flat, diagnostics
+        instruction = handle_step(s, text=text)
+        if instruction is not None:
+            instructions.append(instruction)
+    return instructions, diagnostics
 
 
 def parse_intervals_icu_json(
@@ -311,10 +366,10 @@ def parse_intervals_icu_json(
         return workout
 
     steps_in = data.get("steps") or []
-    steps, diagnostics = _flatten_icu_steps(steps_in, strict=strict)
+    instructions, diagnostics = _parse_icu_instructions(steps_in, strict=strict)
     source_ftp_watts = _coerce_float(data.get("ftp"))
     _validate_resolved_power_targets(
-        steps,
+        instructions,
         source_ftp_watts,
         strict=strict,
         diagnostics=diagnostics,
@@ -323,7 +378,7 @@ def parse_intervals_icu_json(
     return Workout(
         name=name,
         source_ftp_watts=source_ftp_watts,
-        steps=steps,
+        instructions=instructions,
         diagnostics=diagnostics,
     )
 

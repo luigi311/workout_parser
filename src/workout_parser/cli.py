@@ -54,10 +54,11 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
         else "variable"
     )
     lines.append(f"Total:       {total}")
-    lines.append(f"Steps:       {len(workout.steps)}")
+    steps = workout.expanded_steps()
+    lines.append(f"Steps:       {len(steps)}")
     lines.append("─" * 60)
 
-    for i, step in enumerate(workout.steps):
+    for i, step in enumerate(steps):
         lines.append(f"\n  Step {i + 1}:")
         if step.text:
             lines.append(f"    Text:     {step.text}")

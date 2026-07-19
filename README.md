@@ -25,7 +25,7 @@ workout = load_workout(Path("my_workout.json"))  # or .fit
 print(workout.name)
 print(workout.total_seconds)
 
-for step in workout.steps:
+for step in workout.expanded_steps():
     print(step.duration_s, step.power_watts, step.speed_mps)
 ```
 
@@ -61,8 +61,14 @@ therefore omitted with a diagnostic.
 | `name` | `str` | Workout name |
 | `workout_date` | `date \| None` | Optional date |
 | `source_ftp_watts` | `int \| float \| None` | Historical FTP used for source-resolved watts |
-| `steps` | `list[WorkoutStep]` | Flat list of steps (repeats are expanded) |
+| `instructions` | `list[WorkoutStep \| RepeatBlock]` | Canonical recursive workout structure |
+| `expanded_steps()` | `list[WorkoutStep]` | Independent deep-copied execution steps |
 | `total_seconds` | `float` | Sum of all step durations (property) |
+
+Repeats remain canonical `RepeatBlock` instructions with a positive
+`repetitions` count and recursively nested `instructions`. Call
+`expanded_steps()` only when a flat execution sequence is needed; every
+occurrence is a deep copy and can be modified independently.
 
 ### `WorkoutStep`
 

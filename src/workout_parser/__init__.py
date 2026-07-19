@@ -11,6 +11,7 @@ from workout_parser.models import (
     PointTarget,
     RampTarget,
     RangeTarget,
+    RepeatBlock,
     TimeDuration,
     Workout,
     WorkoutStep,
