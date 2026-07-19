@@ -1,7 +1,8 @@
 from __future__ import annotations
 import base64
-from math import floor
 from datetime import date
+from math import floor
+from pathlib import Path
 from workout_parser.models import (
     DistanceDuration,
     OpenDuration,
@@ -17,10 +18,6 @@ from workout_parser.models import (
 from workout_parser.errors import InvalidWorkoutError, UnsupportedWorkoutFeatureError
 
 import json
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # -----------------------
