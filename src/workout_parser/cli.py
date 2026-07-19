@@ -74,7 +74,7 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
             lines.append(
                 f"    Watts:    {_format_target(step.power_watts, decimals=0, suffix=' W')}"
             )
-        elif step.power_percent_ftp is not None:
+        if step.power_percent_ftp is not None:
             lines.append(
                 f"    %FTP:     {_format_target(step.power_percent_ftp, decimals=0, suffix='%')}"
             )

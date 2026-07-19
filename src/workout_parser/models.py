@@ -107,6 +107,7 @@ class Workout(BaseModel):
     name: str
     description: str | None = None
     workout_date: date | None = None
+    source_ftp_watts: int | float | None = None
     diagnostics: list[ParseDiagnostic] = Field(default_factory=list)
 
     steps: list[WorkoutStep] = Field(default_factory=list)

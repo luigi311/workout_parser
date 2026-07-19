@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from workout_parser import (
     DistanceDuration,
+    InvalidWorkoutError,
     OpenDuration,
     PointTarget,
     RampTarget,
@@ -233,3 +234,51 @@ def test_fit_decodes_typed_duration_and_target_fields() -> None:
     )
     assert workout.steps[2].duration == OpenDuration()
     assert workout.steps[2].cadence_rpm == RangeTarget(low=85, high=95)
+
+
+def test_json_preserves_relative_and_resolved_power() -> None:
+    workout = parse_intervals_icu_json(
+        {
+            "ftp": 165,
+            "steps": [
+                {
+                    "duration": 60,
+                    "power": {"value": 105, "units": "%ftp"},
+                    "_power": {"value": 173, "start": 168, "end": 178},
+                }
+            ],
+        },
+        Path("power.json"),
+    )
+    step = workout.steps[0]
+
+    assert workout.source_ftp_watts == 165
+    assert step.power_percent_ftp == PointTarget(value=105)
+    assert step.power_watts == RangeTarget(low=168, high=178)
+
+    step.generate_absolute_power_targets_from_percent(ftp_watts=250)
+    assert step.power_percent_ftp == PointTarget(value=105)
+    assert step.power_watts == PointTarget(value=262)
+
+
+def test_conflicting_resolved_power_is_strict_or_diagnostic() -> None:
+    data = {
+        "ftp": 165,
+        "steps": [
+            {
+                "duration": 60,
+                "power": {"value": 105, "units": "%ftp"},
+                "_power": {"value": 220, "start": 215, "end": 225},
+            }
+        ],
+    }
+
+    with pytest.raises(InvalidWorkoutError):
+        parse_intervals_icu_json(data, Path("conflict.json"))
+
+    workout = parse_intervals_icu_json(
+        data, Path("conflict.json"), strict=False
+    )
+    assert workout.steps[0].power_percent_ftp == PointTarget(value=105)
+    assert workout.steps[0].power_watts == RangeTarget(low=215, high=225)
+    assert workout.diagnostics[0].code == "conflicting_resolved_power"

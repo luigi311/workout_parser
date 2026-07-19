@@ -60,6 +60,7 @@ therefore omitted with a diagnostic.
 |---|---|---|
 | `name` | `str` | Workout name |
 | `workout_date` | `date \| None` | Optional date |
+| `source_ftp_watts` | `int \| float \| None` | Historical FTP used for source-resolved watts |
 | `steps` | `list[WorkoutStep]` | Flat list of steps (repeats are expanded) |
 | `total_seconds` | `float` | Sum of all step durations (property) |
 
@@ -92,6 +93,13 @@ To resolve percent targets into absolute values after construction:
 step.generate_absolute_power_targets_from_percent(ftp_watts=250)
 step.generate_pace_targets_from_percent(threshold_speed_mps=3.5)
 ```
+
+When an Intervals.icu export contains both `%FTP` and resolved watts, both are
+preserved. `source_ftp_watts` records the historical FTP used by the export; it
+is not treated as the athlete's current FTP. Applications can supply a current
+value to `generate_absolute_power_targets_from_percent()`, which replaces the
+resolved `power_watts` target while retaining the portable
+`power_percent_ftp` instruction.
 
 ## Running Tests
 

@@ -13,7 +13,7 @@ from workout_parser.models import (
     Workout,
     WorkoutStep,
 )
-from workout_parser.errors import UnsupportedWorkoutFeatureError
+from workout_parser.errors import InvalidWorkoutError, UnsupportedWorkoutFeatureError
 
 import json
 from typing import TYPE_CHECKING
@@ -61,6 +61,63 @@ def _target_from_icu(
     if value is not None:
         return PointTarget(value=value)
     return None
+
+
+def _power_comparison_pairs(
+    relative: PointTarget | RangeTarget | RampTarget,
+    absolute: PointTarget | RangeTarget | RampTarget,
+) -> list[tuple[int | float, int | float]] | None:
+    if isinstance(relative, PointTarget):
+        if isinstance(absolute, PointTarget):
+            return [(relative.value, absolute.value)]
+        if isinstance(absolute, RangeTarget):
+            return [(relative.value, absolute.mid)]
+        return None
+    if isinstance(relative, RangeTarget) and isinstance(absolute, RangeTarget):
+        return [(relative.low, absolute.low), (relative.high, absolute.high)]
+    if isinstance(relative, RampTarget) and isinstance(absolute, RampTarget):
+        return [(relative.start, absolute.start), (relative.end, absolute.end)]
+    return None
+
+
+def _validate_resolved_power_targets(
+    steps: list[WorkoutStep],
+    source_ftp_watts: int | float | None,
+    *,
+    strict: bool,
+    diagnostics: list[ParseDiagnostic],
+) -> None:
+    if source_ftp_watts is None:
+        return
+
+    for step_index, step in enumerate(steps):
+        relative = step.power_percent_ftp
+        absolute = step.power_watts
+        if relative is None or absolute is None:
+            continue
+
+        pairs = _power_comparison_pairs(relative, absolute)
+        inconsistent = pairs is None or any(
+            abs(float(percent) * float(source_ftp_watts) / 100.0 - float(watts))
+            > 1.0
+            for percent, watts in (pairs or [])
+        )
+        if not inconsistent:
+            continue
+
+        message = (
+            f"Step {step_index} resolved watts conflict with its %FTP target "
+            f"at source FTP {source_ftp_watts} W"
+        )
+        if strict:
+            raise InvalidWorkoutError(message)
+        diagnostics.append(
+            ParseDiagnostic(
+                code="conflicting_resolved_power",
+                message=message,
+                step_index=step_index,
+            )
+        )
 
 
 def _flatten_icu_steps(
@@ -136,7 +193,7 @@ def _flatten_icu_steps(
         power_zone = None
         if isinstance(pw_per_meta, dict):
             units = (pw_per_meta.get("units") or "").casefold()
-            if power_target is None and ("%power" in units or "ftp" in units):
+            if "%power" in units or "ftp" in units:
                 percent_power_target = _target_from_icu(pw_per_meta, ramp=ramp)
             elif "zone" in units:
                 power_zone = _target_from_icu(pw_per_meta, ramp=ramp)
@@ -220,7 +277,7 @@ def parse_intervals_icu_json(
             try:
                 decoded_data = json.loads(decoded_bytes)
                 workout = parse_intervals_icu_json(decoded_data, path, strict=strict)
-            except UnsupportedWorkoutFeatureError:
+            except (InvalidWorkoutError, UnsupportedWorkoutFeatureError):
                 raise
             except Exception as e:
                 raise ValueError(
@@ -255,8 +312,20 @@ def parse_intervals_icu_json(
 
     steps_in = data.get("steps") or []
     steps, diagnostics = _flatten_icu_steps(steps_in, strict=strict)
+    source_ftp_watts = _coerce_float(data.get("ftp"))
+    _validate_resolved_power_targets(
+        steps,
+        source_ftp_watts,
+        strict=strict,
+        diagnostics=diagnostics,
+    )
 
-    return Workout(name=name, steps=steps, diagnostics=diagnostics)
+    return Workout(
+        name=name,
+        source_ftp_watts=source_ftp_watts,
+        steps=steps,
+        diagnostics=diagnostics,
+    )
 
 
 def parse_intervals_icu_json_file(path: Path, *, strict: bool = True) -> Workout:
