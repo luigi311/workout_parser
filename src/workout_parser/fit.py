@@ -1,4 +1,3 @@
-from math import floor
 from workout_parser.errors import InvalidWorkoutError, UnsupportedWorkoutFeatureError
 from workout_parser.models import (
     DistanceDuration,
@@ -32,6 +31,79 @@ def _first_non_none(d: dict, *keys):
         if k in d and d[k] is not None:
             return d[k]
     return None
+
+
+def _fit_custom_bounds(
+    fields: dict,
+    low_keys: tuple[str, ...],
+    high_keys: tuple[str, ...],
+    label: str,
+) -> tuple[float, float] | None:
+    low_raw = _first_non_none(fields, *low_keys)
+    high_raw = _first_non_none(fields, *high_keys)
+    if low_raw is None and high_raw is None:
+        return None
+    if low_raw is None or high_raw is None:
+        raise InvalidWorkoutError(f"FIT {label} target requires both bounds")
+    low = _coerce_float(low_raw)
+    high = _coerce_float(high_raw)
+    if low is None or high is None:
+        raise InvalidWorkoutError(f"FIT {label} target bounds must be numeric")
+    if low > high:
+        raise InvalidWorkoutError(f"FIT {label} target bounds are reversed")
+    return (low, high)
+
+
+def _fit_zone(fields: dict, field_name: str, label: str) -> PointTarget | None:
+    raw_zone = fields.get(field_name)
+    if raw_zone is None:
+        return None
+    zone = _coerce_float(raw_zone)
+    if zone is None or zone < 0 or not zone.is_integer():
+        raise InvalidWorkoutError(f"FIT {label} zone must be a non-negative integer")
+    return PointTarget(value=int(zone)) if zone > 0 else None
+
+
+def _fit_zone_and_bounds(
+    fields: dict,
+    *,
+    zone_field: str,
+    low_keys: tuple[str, ...],
+    high_keys: tuple[str, ...],
+    label: str,
+) -> tuple[PointTarget | None, tuple[float, float] | None]:
+    zone = _fit_zone(fields, zone_field, label)
+    bounds = _fit_custom_bounds(fields, low_keys, high_keys, label)
+    if zone is not None and bounds is not None:
+        if bounds != (0.0, 0.0):
+            raise InvalidWorkoutError(
+                f"FIT {label} target cannot specify both a zone and custom bounds"
+            )
+        bounds = None
+    return zone, bounds
+
+
+def _decode_fit_duration(fields: dict) -> TimeDuration | DistanceDuration | OpenDuration:
+    duration_type = str(fields.get("duration_type") or "").lower()
+    if duration_type == "time":
+        seconds = _coerce_float(fields.get("duration_time"))
+        if seconds is None or seconds <= 0:
+            raise InvalidWorkoutError("FIT time duration must be positive")
+        return TimeDuration(seconds=seconds)
+    if duration_type == "distance":
+        meters = _coerce_float(fields.get("duration_distance"))
+        if meters is None or meters <= 0:
+            raise InvalidWorkoutError("FIT distance duration must be positive")
+        return DistanceDuration(meters=meters)
+    if duration_type in {"open", "lap_button", "until_manual_lap"}:
+        return OpenDuration()
+    if "calorie" in duration_type:
+        raise UnsupportedWorkoutFeatureError(
+            "Calorie-based FIT durations are not supported"
+        )
+    raise UnsupportedWorkoutFeatureError(
+        f"Unsupported FIT duration type: {duration_type or 'missing'}"
+    )
 
 
 def parse_fit_from_bytes(
@@ -73,6 +145,17 @@ def parse_fit(
         diagnostics.append(
             ParseDiagnostic(
                 code="unsupported_feature",
+                message=message,
+                step_index=step_index,
+            )
+        )
+
+    def invalid_source(message: str, step_index: int) -> None:
+        if strict:
+            raise InvalidWorkoutError(message)
+        diagnostics.append(
+            ParseDiagnostic(
+                code="invalid_field",
                 message=message,
                 step_index=step_index,
             )
@@ -134,191 +217,114 @@ def parse_fit(
             )
             continue
 
-        # Decode duration according to its declared FIT type.
-        duration = None
-        if dur_type == "time":
-            seconds = _coerce_float(fields.get("duration_time"))
-            if seconds is not None and seconds > 0:
-                duration = TimeDuration(seconds=seconds)
-        elif "distance" in dur_type:
-            meters = _coerce_float(fields.get("duration_distance"))
-            if meters is not None and meters > 0:
-                duration = DistanceDuration(meters=meters)
-        elif dur_type in {"open", "lap_button", "until_manual_lap"}:
-            duration = OpenDuration()
-        elif "calorie" in dur_type:
-            unsupported("Calorie-based FIT durations are not supported", msg_idx)
+        try:
+            duration = _decode_fit_duration(fields)
+        except UnsupportedWorkoutFeatureError as error:
+            unsupported(str(error), msg_idx)
             continue
-        else:
-            unsupported(
-                f"Unsupported FIT duration type: {dur_type or 'missing'}", msg_idx
-            )
-            continue
-
-        if duration is None:
-            unsupported(f"Invalid FIT {dur_type} duration", msg_idx)
+        except InvalidWorkoutError as error:
+            invalid_source(str(error), msg_idx)
             continue
 
         tgt_type = str(fields.get("target_type") or "").lower()
 
-        # ---------- targets ----------
-        speed_lo = speed_hi = None
-
-        watts_lo = watts_hi = None
-
-        percent_watts_lo = percent_watts_hi = None
-
-        heart_rate_bpm = None
-        heart_rate_percent_max = None
-        cadence_rpm = None
-        power_zone = None
-        speed_zone = None
-        heart_rate_zone = None
-        cadence_zone = None
-
-        def fit_zone(field_name: str):
-            zone = _coerce_float(fields.get(field_name))
-            return PointTarget(value=zone) if zone is not None and zone > 0 else None
-
-        # PACE / SPEED
-        if ("pace" in tgt_type) or ("speed" in tgt_type):
-            speed_zone = fit_zone("target_speed_zone")
-            lo_raw = _first_non_none(
-                fields,
-                "custom_target_speed_low",
-                "target_speed_low",
-                # some files abuse generic value fields; allow if labeled as pace/speed
-                "custom_target_value_low"
-                if ("pace" in tgt_type or "speed" in tgt_type)
-                else None,
-            )
-            hi_raw = _first_non_none(
-                fields,
-                "custom_target_speed_high",
-                "target_speed_high",
-                "custom_target_value_high"
-                if ("pace" in tgt_type or "speed" in tgt_type)
-                else None,
-            )
-            speed_lo = _coerce_float(lo_raw)
-            speed_hi = _coerce_float(hi_raw)
-
-        # POWER
-        elif "power" in tgt_type:
-            power_zone = fit_zone("target_power_zone")
-            lo_raw = _first_non_none(
-                fields,
-                "custom_target_power_low",
-                "target_power_low",
-                # allow generic value fields if type is power (but not percent)
-                "custom_target_value_low"
-                if ("percent" not in tgt_type and "ftp" not in tgt_type)
-                else None,
-            )
-            hi_raw = _first_non_none(
-                fields,
-                "custom_target_power_high",
-                "target_power_high",
-                "custom_target_value_high"
-                if ("percent" not in tgt_type and "ftp" not in tgt_type)
-                else None,
-            )
-            lo_f = _coerce_float(lo_raw)
-            hi_f = _coerce_float(hi_raw)
-
-            # Based on the fit spec
-            # Values < 1000 are percentage of ftp based
-            # Values > 1000 are absolute watts shifted by 1000
-            if lo_f and hi_f:
-                if lo_f > 1000:
-                    watts_lo = lo_f - 1000
-                else:
-                    percent_watts_lo = lo_f
-
-                if hi_f > 1000:
-                    watts_hi = hi_f - 1000
-                else:
-                    percent_watts_hi = hi_f
-
-        # HEART RATE
-        elif "heart_rate" in tgt_type or tgt_type == "hr":
-            heart_rate_zone = fit_zone("target_hr_zone")
-            lo_f = _coerce_float(
-                _first_non_none(
+        power_watts = power_percent_ftp = power_zone = None
+        speed_mps = speed_zone = None
+        heart_rate_bpm = heart_rate_percent_max = heart_rate_zone = None
+        cadence_rpm = cadence_zone = None
+        try:
+            if "pace" in tgt_type or "speed" in tgt_type:
+                speed_zone, bounds = _fit_zone_and_bounds(
                     fields,
-                    "custom_target_heart_rate_low",
-                    "target_heart_rate_low",
-                    "custom_target_value_low",
+                    zone_field="target_speed_zone",
+                    low_keys=(
+                        "custom_target_speed_low",
+                        "target_speed_low",
+                        "custom_target_value_low",
+                    ),
+                    high_keys=(
+                        "custom_target_speed_high",
+                        "target_speed_high",
+                        "custom_target_value_high",
+                    ),
+                    label="speed",
                 )
-            )
-            hi_f = _coerce_float(
-                _first_non_none(
+                if bounds is not None:
+                    speed_mps = RangeTarget(low=bounds[0], high=bounds[1])
+            elif "power" in tgt_type:
+                power_zone, bounds = _fit_zone_and_bounds(
                     fields,
-                    "custom_target_heart_rate_high",
-                    "target_heart_rate_high",
-                    "custom_target_value_high",
+                    zone_field="target_power_zone",
+                    low_keys=(
+                        "custom_target_power_low",
+                        "target_power_low",
+                        "custom_target_value_low",
+                    ),
+                    high_keys=(
+                        "custom_target_power_high",
+                        "target_power_high",
+                        "custom_target_value_high",
+                    ),
+                    label="power",
                 )
-            )
-            if (
-                lo_f is not None
-                and hi_f is not None
-                and (lo_f != 0 or hi_f != 0)
-            ):
-                if lo_f > 100 and hi_f > 100:
-                    heart_rate_bpm = RangeTarget(low=lo_f - 100, high=hi_f - 100)
-                elif lo_f <= 100 and hi_f <= 100:
-                    heart_rate_percent_max = RangeTarget(low=lo_f, high=hi_f)
-                else:
-                    unsupported("Mixed FIT heart-rate target encodings", msg_idx)
-
-        # CADENCE
-        elif "cadence" in tgt_type:
-            cadence_zone = fit_zone("target_cadence_zone")
-            lo_f = _coerce_float(
-                _first_non_none(
+                if bounds is not None:
+                    low, high = bounds
+                    if low <= 1000 and high <= 1000:
+                        power_percent_ftp = RangeTarget(low=low, high=high)
+                    elif low > 1000 and high > 1000:
+                        power_watts = RangeTarget(low=low - 1000, high=high - 1000)
+                    else:
+                        raise InvalidWorkoutError(
+                            "FIT power bounds mix relative and absolute encodings"
+                        )
+            elif "heart_rate" in tgt_type or tgt_type == "hr":
+                heart_rate_zone, bounds = _fit_zone_and_bounds(
                     fields,
-                    "custom_target_cadence_low",
-                    "target_cadence_low",
-                    "custom_target_value_low",
+                    zone_field="target_hr_zone",
+                    low_keys=(
+                        "custom_target_heart_rate_low",
+                        "target_heart_rate_low",
+                        "custom_target_value_low",
+                    ),
+                    high_keys=(
+                        "custom_target_heart_rate_high",
+                        "target_heart_rate_high",
+                        "custom_target_value_high",
+                    ),
+                    label="heart-rate",
                 )
-            )
-            hi_f = _coerce_float(
-                _first_non_none(
+                if bounds is not None:
+                    low, high = bounds
+                    if low <= 100 and high <= 100:
+                        heart_rate_percent_max = RangeTarget(low=low, high=high)
+                    elif low > 100 and high > 100:
+                        heart_rate_bpm = RangeTarget(low=low - 100, high=high - 100)
+                    else:
+                        raise InvalidWorkoutError(
+                            "FIT heart-rate bounds mix relative and absolute encodings"
+                        )
+            elif "cadence" in tgt_type:
+                cadence_zone, bounds = _fit_zone_and_bounds(
                     fields,
-                    "custom_target_cadence_high",
-                    "target_cadence_high",
-                    "custom_target_value_high",
+                    zone_field="target_cadence_zone",
+                    low_keys=(
+                        "custom_target_cadence_low",
+                        "target_cadence_low",
+                        "custom_target_value_low",
+                    ),
+                    high_keys=(
+                        "custom_target_cadence_high",
+                        "target_cadence_high",
+                        "custom_target_value_high",
+                    ),
+                    label="cadence",
                 )
-            )
-            if (
-                lo_f is not None
-                and hi_f is not None
-                and (lo_f != 0 or hi_f != 0)
-            ):
-                cadence_rpm = RangeTarget(low=lo_f, high=hi_f)
-        elif tgt_type not in {"", "open", "no_target"}:
-            unsupported(f"Unsupported FIT target type: {tgt_type}", msg_idx)
-
-        # ---------- build step (prefer power, then pace; else duration-only) ----------
-        power_watts = None
-        if watts_lo is not None and watts_hi is not None:
-            power_watts = RangeTarget(
-                low=floor(watts_lo), high=floor(watts_hi)
-            )
-
-        power_percent_ftp = None
-        if percent_watts_lo is not None and percent_watts_hi is not None:
-            power_percent_ftp = RangeTarget(
-                low=percent_watts_lo, high=percent_watts_hi
-            )
-
-        speed_mps = None
-        if (
-            speed_lo is not None
-            and speed_hi is not None
-            and (speed_lo != 0 or speed_hi != 0)
-        ):
-            speed_mps = RangeTarget(low=speed_lo, high=speed_hi)
+                if bounds is not None:
+                    cadence_rpm = RangeTarget(low=bounds[0], high=bounds[1])
+            elif tgt_type not in {"", "open", "no_target"}:
+                unsupported(f"Unsupported FIT target type: {tgt_type}", msg_idx)
+        except InvalidWorkoutError as error:
+            invalid_source(str(error), msg_idx)
 
         step = WorkoutStep(
             duration=duration,

@@ -552,3 +552,108 @@ def test_cli_maps_public_errors_to_exit_one(tmp_path, capsys) -> None:
     captured = capsys.readouterr()
     assert "Error:" in captured.err
     assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("low", "high", "field", "expected"),
+    [
+        (0, 0, "power_percent_ftp", RangeTarget(low=0, high=0)),
+        (90, 100, "power_percent_ftp", RangeTarget(low=90, high=100)),
+        (1100, 1200, "power_watts", RangeTarget(low=100, high=200)),
+    ],
+)
+def test_fit_decodes_power_bound_encodings(low, high, field, expected) -> None:
+    workout = parse_fit(
+        _FitFile(
+            _FitMessage(
+                message_index=0,
+                duration_type="time",
+                duration_time=60,
+                target_type="power",
+                target_power_zone=0,
+                custom_target_power_low=low,
+                custom_target_power_high=high,
+            )
+        )
+    )
+
+    assert getattr(workout.expanded_steps()[0], field) == expected
+
+
+@pytest.mark.parametrize(
+    "target_fields",
+    [
+        {
+            "target_type": "power",
+            "target_power_zone": 0,
+            "custom_target_power_low": 1100,
+        },
+        {
+            "target_type": "power",
+            "target_power_zone": 0,
+            "custom_target_power_low": 1100,
+            "custom_target_power_high": 90,
+        },
+        {
+            "target_type": "heart_rate",
+            "target_hr_zone": 0,
+            "custom_target_heart_rate_low": 180,
+            "custom_target_heart_rate_high": 90,
+        },
+        {
+            "target_type": "cadence",
+            "target_cadence_zone": 2,
+            "custom_target_cadence_low": 80,
+            "custom_target_cadence_high": 90,
+        },
+    ],
+)
+def test_fit_rejects_incomplete_mixed_or_conflicting_targets(target_fields) -> None:
+    message = _FitMessage(
+        message_index=0,
+        duration_type="time",
+        duration_time=60,
+        **target_fields,
+    )
+
+    with pytest.raises(InvalidWorkoutError):
+        parse_fit(_FitFile(message))
+
+    workout = parse_fit(_FitFile(message), strict=False)
+    assert len(workout.expanded_steps()) == 1
+    assert workout.diagnostics[0].code == "invalid_field"
+
+
+def test_fit_zone_ignores_zero_custom_sentinels() -> None:
+    workout = parse_fit(
+        _FitFile(
+            _FitMessage(
+                message_index=0,
+                duration_type="time",
+                duration_time=60,
+                target_type="power",
+                target_power_zone=3,
+                custom_target_power_low=0,
+                custom_target_power_high=0,
+            )
+        )
+    )
+    step = workout.expanded_steps()[0]
+
+    assert step.power_zone == PointTarget(value=3)
+    assert step.power_watts is None
+    assert step.power_percent_ftp is None
+
+
+def test_fit_never_reinterprets_generic_duration_value_as_seconds() -> None:
+    with pytest.raises(InvalidWorkoutError):
+        parse_fit(
+            _FitFile(
+                _FitMessage(
+                    message_index=0,
+                    duration_type="distance",
+                    duration_value=40000,
+                    target_type="open",
+                )
+            )
+        )
