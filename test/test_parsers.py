@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
+from datetime import date
 from itertools import combinations
 from pathlib import Path
 
@@ -198,12 +200,20 @@ class _FitMessage:
 
 
 class _FitFile:
-    def __init__(self, *messages: _FitMessage) -> None:
+    def __init__(
+        self,
+        *messages: _FitMessage,
+        workout_message: _FitMessage | None = None,
+    ) -> None:
         self.messages = messages
+        self.workout_message = workout_message
 
     def get_messages(self, name: str):
-        assert name == "workout_step"
-        return self.messages
+        if name == "workout_step":
+            return self.messages
+        if name == "workout" and self.workout_message is not None:
+            return [self.workout_message]
+        return []
 
 
 def test_fit_decodes_typed_duration_and_target_fields() -> None:
@@ -327,7 +337,7 @@ def test_json_preserves_nested_repeat_structure() -> None:
     assert workout.total_seconds == 50
 
     expanded = workout.expanded_steps()
-    assert [step.text for step in expanded] == [
+    assert [step.instruction for step in expanded] == [
         "work",
         "surge",
         "surge",
@@ -459,7 +469,7 @@ def test_models_are_deeply_immutable() -> None:
     )
 
     with pytest.raises(ValidationError):
-        step.text = "changed"
+        step.instruction = "changed"
     with pytest.raises(ValidationError):
         workout.instructions = ()
 
@@ -657,3 +667,124 @@ def test_fit_never_reinterprets_generic_duration_value_as_seconds() -> None:
                 )
             )
         )
+
+
+def test_raw_json_preserves_metadata_and_text_roles() -> None:
+    workout = parse_intervals_icu_json(
+        {
+            "name": "Source Workout",
+            "description": "Source description",
+            "start_date_local": "2026-07-19T08:00:00",
+            "type": "Run",
+            "steps": [
+                {"duration": 60, "text": "Run smoothly"},
+                {
+                    "reps": 2,
+                    "text": "2x",
+                    "steps": [{"duration": 30, "text": "Hard"}],
+                },
+            ],
+        },
+        Path("fallback.json"),
+    )
+
+    assert workout.name == "Source Workout"
+    assert workout.description == "Source description"
+    assert workout.workout_date == date(2026, 7, 19)
+    assert workout.sport == "running"
+    first = workout.instructions[0]
+    repeat = workout.instructions[1]
+    assert not isinstance(first, RepeatBlock)
+    assert first.name is None
+    assert first.instruction == "Run smoothly"
+    assert isinstance(repeat, RepeatBlock)
+    assert repeat.name == "2x"
+    child = repeat.instructions[0]
+    assert not isinstance(child, RepeatBlock)
+    assert child.instruction == "Hard"
+
+
+def test_wrapper_metadata_precedence_preserves_absent_inner_fields() -> None:
+    embedded = {
+        "name": "Embedded name",
+        "description": "Embedded description",
+        "start_date_local": "2026-07-18",
+        "type": "Run",
+        "steps": [{"duration": 60}],
+    }
+    wrapper = {
+        "name": "Wrapper name",
+        "type": "Ride",
+        "workout_filename": "embedded.json",
+        "workout_file_base64": base64.b64encode(
+            json.dumps(embedded).encode()
+        ).decode(),
+    }
+
+    workout = parse_intervals_icu_json(wrapper, Path("wrapper.json"))
+
+    assert workout.name == "Wrapper name"
+    assert workout.description == "Embedded description"
+    assert workout.workout_date == date(2026, 7, 18)
+    assert workout.sport == "cycling"
+
+
+def test_invalid_date_is_strict_or_diagnostic() -> None:
+    data = {
+        "start_date_local": "not-a-date",
+        "steps": [{"duration": 60}],
+    }
+
+    with pytest.raises(InvalidWorkoutError):
+        parse_intervals_icu_json(data, Path("invalid-date.json"))
+
+    workout = parse_intervals_icu_json(
+        data, Path("invalid-date.json"), strict=False
+    )
+    assert workout.workout_date is None
+    assert workout.diagnostics[0].code == "invalid_date"
+
+
+def test_fit_preserves_header_step_and_repeat_metadata() -> None:
+    fit_file = _FitFile(
+        _FitMessage(
+            message_index=0,
+            wkt_step_name="Work",
+            notes="Stay controlled",
+            duration_type="time",
+            duration_time=60,
+            target_type="open",
+        ),
+        _FitMessage(
+            message_index=1,
+            wkt_step_name="2x",
+            notes="Repeat notes",
+            duration_type="repeat_until_steps_cmplt",
+            duration_step=0,
+            repeat_steps=2,
+        ),
+        workout_message=_FitMessage(
+            wkt_name="Embedded FIT name",
+            sport="running",
+        ),
+    )
+
+    workout = parse_fit(fit_file, fallback_name="filename")
+    repeat = workout.instructions[0]
+
+    assert workout.name == "Embedded FIT name"
+    assert workout.sport == "running"
+    assert isinstance(repeat, RepeatBlock)
+    assert repeat.name == "2x"
+    assert repeat.notes == "Repeat notes"
+    child = repeat.instructions[0]
+    assert not isinstance(child, RepeatBlock)
+    assert child.name == "Work"
+    assert child.notes == "Stay controlled"
+
+    overridden = parse_fit(
+        fit_file,
+        name="Wrapper name",
+        fallback_name="filename",
+    )
+    assert overridden.name == "Wrapper name"

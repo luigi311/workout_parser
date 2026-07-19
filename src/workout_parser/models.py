@@ -82,7 +82,9 @@ def _scale_target(
 
 
 class WorkoutStep(_ImmutableModel):
-    text: str | None = None
+    name: str | None = None
+    instruction: str | None = None
+    notes: str | None = None
     duration: TimeDuration | DistanceDuration | OpenDuration
 
     power_watts: PointTarget | RangeTarget | RampTarget | None = None
@@ -136,6 +138,9 @@ class WorkoutStep(_ImmutableModel):
 
 
 class RepeatBlock(_ImmutableModel):
+    name: str | None = None
+    instruction: str | None = None
+    notes: str | None = None
     repetitions: int = Field(gt=0, strict=True)
     instructions: tuple[WorkoutStep | RepeatBlock, ...] = ()
 
@@ -144,6 +149,7 @@ class Workout(_ImmutableModel):
     name: str
     description: str | None = None
     workout_date: date | None = None
+    sport: str | None = None
     source_ftp_watts: FinitePositive | None = None
     diagnostics: tuple[ParseDiagnostic, ...] = ()
 

@@ -61,8 +61,12 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
 
     for i, step in enumerate(steps):
         lines.append(f"\n  Step {i + 1}:")
-        if step.text:
-            lines.append(f"    Text:     {step.text}")
+        if step.name:
+            lines.append(f"    Name:     {step.name}")
+        if step.instruction:
+            lines.append(f"    Instruction: {step.instruction}")
+        if step.notes:
+            lines.append(f"    Notes:    {step.notes}")
         if isinstance(step.duration, TimeDuration):
             duration = _format_duration(step.duration.seconds)
         elif isinstance(step.duration, DistanceDuration):

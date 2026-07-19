@@ -21,6 +21,7 @@ from workout_parser.errors import (
     UnsupportedFormatError,
     UnsupportedWorkoutFeatureError,
 )
+from workout_parser.metadata import normalize_sport
 
 import json
 
@@ -132,6 +133,26 @@ def _validate_resolved_power_targets(
         )
 
 
+def _parse_workout_date(
+    value: object,
+    *,
+    strict: bool,
+    diagnostics: list[ParseDiagnostic],
+) -> date | None:
+    if value is None:
+        return None
+    try:
+        if not isinstance(value, str):
+            raise ValueError("date must be a string")
+        return date.fromisoformat(value.split("T", 1)[0])
+    except ValueError as error:
+        message = f"Invalid workout date: {value!r}"
+        if strict:
+            raise InvalidWorkoutError(message) from error
+        diagnostics.append(ParseDiagnostic(code="invalid_date", message=message))
+        return None
+
+
 def _parse_icu_instructions(
     steps: list[dict], *, strict: bool
 ) -> tuple[list[WorkoutStep | RepeatBlock], list[ParseDiagnostic]]:
@@ -161,9 +182,7 @@ def _parse_icu_instructions(
             raise UnsupportedWorkoutFeatureError(message)
         diagnostics.append(diagnostic)
 
-    def handle_step(
-        node: dict, text: str | None = None
-    ) -> WorkoutStep | RepeatBlock | None:
+    def handle_step(node: dict) -> WorkoutStep | RepeatBlock | None:
         nonlocal source_index
         step_index = source_index
         source_index += 1
@@ -187,14 +206,17 @@ def _parse_icu_instructions(
 
             nested: list[WorkoutStep | RepeatBlock] = []
             for sub in node["steps"]:
-                sub_text = sub.get("text") or text
-                instruction = handle_step(sub, text=sub_text)
+                instruction = handle_step(sub)
                 if instruction is not None:
                     nested.append(instruction)
             if not nested:
                 invalid_repeat("Repeat block cannot be empty", step_index)
                 return None
-            return RepeatBlock(repetitions=repetitions, instructions=nested)
+            return RepeatBlock(
+                name=node.get("text"),
+                repetitions=repetitions,
+                instructions=nested,
+            )
 
         calories = _coerce_float(node.get("calories"))
         distance = _coerce_float(node.get("distance"))
@@ -290,7 +312,7 @@ def _parse_icu_instructions(
                 unsupported(f"Unsupported cadence units: {units}", step_index)
 
         step = WorkoutStep(
-            text=text,
+            instruction=node.get("text"),
             duration=duration,
             power_watts=power_target,
             power_percent_ftp=percent_power_target,
@@ -308,8 +330,7 @@ def _parse_icu_instructions(
         return step
 
     for s in steps:
-        text = s.get("text")
-        instruction = handle_step(s, text=text)
+        instruction = handle_step(s)
         if instruction is not None:
             instructions.append(instruction)
     return instructions, diagnostics
@@ -346,32 +367,43 @@ def parse_intervals_icu_json(
                 raise InvalidWorkoutError(
                     "Failed to parse embedded Intervals.icu workout JSON"
                 ) from error
-            workout = parse_intervals_icu_json(decoded_data, path, strict=strict)
+            workout = parse_intervals_icu_json(
+                decoded_data, Path(filename), strict=strict
+            )
 
         elif embedded_suffix == ".fit":
             # If its a .fit file then call the fit parser on the decoded bytes
             from workout_parser.fit import parse_fit_from_bytes
 
-            workout = parse_fit_from_bytes(decoded_bytes, name=name, strict=strict)
+            workout = parse_fit_from_bytes(
+                decoded_bytes,
+                name=data.get("name") or None,
+                fallback_name=Path(filename).stem,
+                strict=strict,
+            )
         else:
             raise UnsupportedFormatError(
                 f"Unsupported embedded workout format: {filename}"
             )
 
-        updates = {
-            "name": data.get("name") or Path(filename).stem,
-            "description": data.get("description"),
-        }
-        # Parse out the workout date from the original JSON if available
-        workout_date_str = data.get("start_date_local")
-        if workout_date_str:
-            try:
-                # Parse out the date from 2026-04-07T08:00:00
-                updates["workout_date"] = date.fromisoformat(
-                    workout_date_str.split("T")[0]
-                )
-            except ValueError:
-                pass  # Ignore date parsing errors and leave workout_date as None
+        updates = {}
+        if data.get("name"):
+            updates["name"] = data["name"]
+        if data.get("description") is not None:
+            updates["description"] = data["description"]
+        wrapper_sport = normalize_sport(data.get("type") or data.get("sport"))
+        if wrapper_sport is not None:
+            updates["sport"] = wrapper_sport
+        diagnostics = list(workout.diagnostics)
+        if data.get("start_date_local") is not None:
+            wrapper_date = _parse_workout_date(
+                data["start_date_local"],
+                strict=strict,
+                diagnostics=diagnostics,
+            )
+            if wrapper_date is not None:
+                updates["workout_date"] = wrapper_date
+        updates["diagnostics"] = tuple(diagnostics)
         return workout.model_copy(update=updates, deep=True)
 
     steps_in = data.get("steps") or []
@@ -388,6 +420,13 @@ def parse_intervals_icu_json(
 
     workout = Workout(
         name=name,
+        description=data.get("description"),
+        workout_date=_parse_workout_date(
+            data.get("start_date_local"),
+            strict=strict,
+            diagnostics=diagnostics,
+        ),
+        sport=normalize_sport(data.get("type") or data.get("sport")),
         source_ftp_watts=source_ftp_watts,
         instructions=instructions,
         diagnostics=diagnostics,

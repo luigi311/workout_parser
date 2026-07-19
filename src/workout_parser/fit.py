@@ -10,6 +10,7 @@ from workout_parser.models import (
     Workout,
     WorkoutStep,
 )
+from workout_parser.metadata import normalize_sport
 from pathlib import Path
 from fitparse import FitFile, FitParseError
 from pydantic import ValidationError
@@ -107,7 +108,11 @@ def _decode_fit_duration(fields: dict) -> TimeDuration | DistanceDuration | Open
 
 
 def parse_fit_from_bytes(
-    data: bytes, name: str = "Unnamed Workout", *, strict: bool = True
+    data: bytes,
+    name: str | None = None,
+    fallback_name: str = "Unnamed Workout",
+    *,
+    strict: bool = True,
 ) -> Workout:
     """
     Parse Intervals.icu-style FIT workouts from raw bytes, including pace/power and repeat blocks.
@@ -116,7 +121,9 @@ def parse_fit_from_bytes(
 
     try:
         ff = FitFile(BytesIO(data))
-        return parse_fit(ff, name=name, strict=strict)
+        return parse_fit(
+            ff, name=name, fallback_name=fallback_name, strict=strict
+        )
     except (InvalidWorkoutError, UnsupportedWorkoutFeatureError):
         raise
     except (FitParseError, ValidationError, ValueError, TypeError) as error:
@@ -128,13 +135,25 @@ def parse_fit_from_file(path: Path, *, strict: bool = True) -> Workout:
     Parse Intervals.icu-style FIT workouts including pace/power and repeat blocks.
     """
     ff = FitFile(str(path))
-    return parse_fit(ff, name=path.stem, strict=strict)
+    return parse_fit(ff, fallback_name=path.stem, strict=strict)
 
 
 def parse_fit(
-    ff: FitFile, name: str = "Unnamed Workout", *, strict: bool = True
+    ff: FitFile,
+    name: str | None = None,
+    fallback_name: str = "Unnamed Workout",
+    *,
+    strict: bool = True,
 ) -> Workout:
     """Parse Intervals.icu-style FIT workouts including pace/power and repeat blocks."""
+    header_fields: dict = {}
+    for message in ff.get_messages("workout"):
+        header_fields = {field.name: field.value for field in message}
+        break
+    header_name = header_fields.get("wkt_name")
+    workout_name = name or header_name or fallback_name
+    sport = normalize_sport(header_fields.get("sport"))
+
     # ---------- first pass: collect steps & repeat markers ----------
     entries: list[dict] = []
     diagnostics: list[ParseDiagnostic] = []
@@ -213,6 +232,8 @@ def parse_fit(
                     "message_index": msg_idx,
                     "start_index": start_index,
                     "reps": reps,
+                    "name": fields.get("wkt_step_name"),
+                    "notes": fields.get("notes"),
                 },
             )
             continue
@@ -327,6 +348,8 @@ def parse_fit(
             invalid_source(str(error), msg_idx)
 
         step = WorkoutStep(
+            name=fields.get("wkt_step_name"),
+            notes=fields.get("notes"),
             duration=duration,
             power_watts=power_watts,
             power_percent_ftp=power_percent_ftp,
@@ -406,6 +429,8 @@ def parse_fit(
                 "start": start,
                 "end": marker_index,
                 "instruction": RepeatBlock(
+                    name=e.get("name"),
+                    notes=e.get("notes"),
                     repetitions=repetitions,
                     instructions=instructions,
                 ),
@@ -413,7 +438,8 @@ def parse_fit(
         )
 
     workout = Workout(
-        name=name,
+        name=workout_name,
+        sport=sport,
         instructions=[record["instruction"] for record in records],
         diagnostics=diagnostics,
     )

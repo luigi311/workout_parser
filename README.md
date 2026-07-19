@@ -66,6 +66,7 @@ status 2.
 |---|---|---|
 | `name` | `str` | Workout name |
 | `workout_date` | `date \| None` | Optional date |
+| `sport` | `str \| None` | Normalized sport metadata |
 | `source_ftp_watts` | `int \| float \| None` | Historical FTP used for source-resolved watts |
 | `instructions` | `tuple[WorkoutStep \| RepeatBlock, ...]` | Canonical recursive workout structure |
 | `expanded_steps()` | `list[WorkoutStep]` | Independent deep-copied execution steps |
@@ -75,6 +76,12 @@ Repeats remain canonical `RepeatBlock` instructions with a positive
 `repetitions` count and recursively nested `instructions`. Call
 `expanded_steps()` only when a flat execution sequence is needed; every
 occurrence is an independent immutable deep copy.
+
+Metadata precedence is explicit wrapper metadata, embedded workout metadata,
+FIT headers, then filename fallback. Sports are normalized across source names
+such as `Run`/`running` and `Ride`/`cycling`. Intervals.icu leaf `text` maps to
+`instruction`, repeat `text` maps to the block `name`, FIT `wkt_step_name` maps
+to `name`, and FIT `notes` remains `notes`.
 
 Canonical workout, instruction, duration, and target models are immutable.
 Durations and reference values must be finite and positive; targets must be
@@ -92,6 +99,9 @@ therefore preserved and point targets do not acquire a synthetic display band.
 | Field | Description |
 |---|---|
 | `duration` | `TimeDuration`, `DistanceDuration`, or `OpenDuration` |
+| `name` | Source step name or label |
+| `instruction` | Instruction presented to the athlete |
+| `notes` | Additional source notes |
 | `power_watts` | Absolute power target (watts) |
 | `power_percent_ftp` | Power target as % FTP |
 | `power_zone` | Source power-zone target |
