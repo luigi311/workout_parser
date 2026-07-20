@@ -6,13 +6,36 @@ import argparse
 import sys
 from pathlib import Path
 
-from workout_parser import load_workout, Workout
+from workout_parser import (
+    DistanceDuration,
+    OpenDuration,
+    PointTarget,
+    RampTarget,
+    RangeTarget,
+    TimeDuration,
+    Workout,
+    WorkoutParserError,
+    load_workout,
+)
 
 
 def _format_duration(seconds: float) -> str:
     """Format seconds as MM:SS."""
     m, s = divmod(int(seconds), 60)
     return f"{m:02d}:{s:02d}"
+
+
+def _format_target(target, *, decimals: int, suffix: str) -> str:
+    def value(number: float) -> str:
+        return f"{number:.{decimals}f}{suffix}"
+
+    if isinstance(target, PointTarget):
+        return value(target.value)
+    if isinstance(target, RangeTarget):
+        return f"{value(target.low)} – {value(target.mid)} – {value(target.high)}"
+    if isinstance(target, RampTarget):
+        return f"ramp {value(target.start)} → {value(target.end)}"
+    raise TypeError(f"Unknown target type: {type(target).__name__}")
 
 
 def _dump_workout(workout: Workout, json_out: bool = False) -> str:
@@ -26,47 +49,100 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
         lines.append(f"Description: {workout.description}")
     if workout.workout_date:
         lines.append(f"Date:        {workout.workout_date}")
-    lines.append(f"Total:       {_format_duration(workout.total_seconds)}")
-    lines.append(f"Steps:       {len(workout.steps)}")
+    total = (
+        _format_duration(workout.total_seconds)
+        if workout.total_seconds is not None
+        else "variable"
+    )
+    lines.append(f"Total:       {total}")
+    steps = workout.expanded_steps()
+    lines.append(f"Steps:       {len(steps)}")
     lines.append("─" * 60)
 
-    for i, step in enumerate(workout.steps):
+    for i, step in enumerate(steps):
         lines.append(f"\n  Step {i + 1}:")
-        if step.text:
-            lines.append(f"    Text:     {step.text}")
-        lines.append(f"    Duration: {_format_duration(step.duration_s)}")
+        if step.name:
+            lines.append(f"    Name:     {step.name}")
+        if step.instruction:
+            lines.append(f"    Instruction: {step.instruction}")
+        if step.notes:
+            lines.append(f"    Notes:    {step.notes}")
+        if isinstance(step.duration, TimeDuration):
+            duration = _format_duration(step.duration.seconds)
+        elif isinstance(step.duration, DistanceDuration):
+            duration = f"{step.duration.meters:g} m"
+        elif isinstance(step.duration, OpenDuration):
+            duration = f"open ({step.duration.event})"
+        lines.append(f"    Duration: {duration}")
 
         # Power targets
-        if step.watts_mid is not None:
-            lo = step.watts_lo
-            hi = step.watts_hi
-            if lo is not None and hi is not None:
-                lines.append(f"    Watts:    {lo} – {step.watts_mid} – {hi}")
-            else:
-                lines.append(f"    Watts:    {step.watts_mid}")
-        elif step.percent_watts_mid is not None:
-            lo = step.percent_watts_lo
-            hi = step.percent_watts_hi
-            if lo is not None and hi is not None:
-                lines.append(f"    %FTP:     {lo:.0f}% – {step.percent_watts_mid:.0f}% – {hi:.0f}%")
-            else:
-                lines.append(f"    %FTP:     {step.percent_watts_mid:.0f}%")
+        if step.power_watts is not None:
+            lines.append(
+                f"    Watts:    {_format_target(step.power_watts, decimals=0, suffix=' W')}"
+            )
+        if step.power_percent_ftp is not None:
+            lines.append(
+                f"    %FTP:     {_format_target(step.power_percent_ftp, decimals=0, suffix='%')}"
+            )
+        if step.power_zone is not None:
+            lines.append(
+                "    Power zone: "
+                + _format_target(step.power_zone, decimals=0, suffix="")
+            )
 
         # Pace targets
-        if step.speed_mps_mid is not None:
-            lo = step.speed_mps_lo
-            hi = step.speed_mps_hi
-            if lo is not None and hi is not None:
-                lines.append(f"    Speed:    {lo:.2f} – {step.speed_mps_mid:.2f} – {hi:.2f} m/s")
-            else:
-                lines.append(f"    Speed:    {step.speed_mps_mid:.2f} m/s")
-        elif step.percent_speed_mid is not None:
-            lo = step.percent_speed_lo
-            hi = step.percent_speed_hi
-            if lo is not None and hi is not None:
-                lines.append(f"    %Pace:    {lo:.0f}% – {step.percent_speed_mid:.0f}% – {hi:.0f}%")
-            else:
-                lines.append(f"    %Pace:    {step.percent_speed_mid:.0f}%")
+        if step.speed_mps is not None:
+            lines.append(
+                f"    Speed:    {_format_target(step.speed_mps, decimals=2, suffix=' m/s')}"
+            )
+        if step.speed_percent_threshold is not None:
+            lines.append(
+                "    %Pace:    "
+                + _format_target(
+                    step.speed_percent_threshold, decimals=0, suffix="%"
+                )
+            )
+        if step.speed_zone is not None:
+            lines.append(
+                "    Pace zone: "
+                + _format_target(step.speed_zone, decimals=0, suffix="")
+            )
+
+        if step.heart_rate_bpm is not None:
+            lines.append(
+                "    HR:       "
+                + _format_target(step.heart_rate_bpm, decimals=0, suffix=" bpm")
+            )
+        if step.heart_rate_percent_max is not None:
+            lines.append(
+                "    %Max HR:  "
+                + _format_target(
+                    step.heart_rate_percent_max, decimals=0, suffix="%"
+                )
+            )
+        if step.heart_rate_percent_lthr is not None:
+            lines.append(
+                "    %LTHR:    "
+                + _format_target(
+                    step.heart_rate_percent_lthr, decimals=0, suffix="%"
+                )
+            )
+        if step.heart_rate_zone is not None:
+            lines.append(
+                "    HR zone:  "
+                + _format_target(step.heart_rate_zone, decimals=0, suffix="")
+            )
+
+        if step.cadence_rpm is not None:
+            lines.append(
+                "    Cadence:  "
+                + _format_target(step.cadence_rpm, decimals=0, suffix=" rpm")
+            )
+        if step.cadence_zone is not None:
+            lines.append(
+                "    Cadence zone: "
+                + _format_target(step.cadence_zone, decimals=0, suffix="")
+            )
 
     return "\n".join(lines)
 
@@ -89,10 +165,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    path: Path = args.file
-    if not path.exists():
-        print(f"Error: file not found: {path}", file=sys.stderr)
-        sys.exit(1)
-
-    workout = load_workout(path)
+    try:
+        workout = load_workout(args.file)
+    except WorkoutParserError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(1) from None
     print(_dump_workout(workout, json_out=args.json_out))

@@ -2,8 +2,19 @@ from datetime import date
 from workout_parser.intervals_icu import parse_intervals_icu_json_file
 from workout_parser.fit import parse_fit_from_file
 from workout_parser.models import Workout
+from workout_parser.errors import (
+    InvalidWorkoutError,
+    UnsupportedFormatError,
+    WorkoutFileError,
+    WorkoutLimitError,
+    WorkoutParserError,
+)
+from workout_parser.limits import MAX_SOURCE_BYTES
 from pathlib import Path
 import re
+
+from fitparse import FitParseError
+from pydantic import ValidationError
 
 SMALL_WORDS = {
     "a",
@@ -61,13 +72,38 @@ def pretty_workout_name(raw: str) -> str:
     return " ".join(out)
 
 
-def load_workout(path: Path) -> Workout:
+def load_workout(path: Path, *, strict: bool = True) -> Workout:
+    if not path.exists():
+        raise WorkoutFileError(f"Workout file does not exist: {path}")
+    if not path.is_file():
+        raise WorkoutFileError(f"Workout path is not a regular file: {path}")
+    if path.stat().st_size > MAX_SOURCE_BYTES:
+        raise WorkoutLimitError(
+            f"Workout source exceeds {MAX_SOURCE_BYTES} bytes: {path}"
+        )
+
     ext = path.suffix.lower()
-    if ext == ".fit":
-        return parse_fit_from_file(path)
-    if ext == ".json":
-        return parse_intervals_icu_json_file(path)
-    return Workout(name=path.stem, steps=[])
+    if ext not in SUPPORTED_EXTS:
+        raise UnsupportedFormatError(
+            f"Unsupported workout format {path.suffix or '<none>'}: {path}"
+        )
+
+    try:
+        workout = (
+            parse_fit_from_file(path, strict=strict)
+            if ext == ".fit"
+            else parse_intervals_icu_json_file(path, strict=strict)
+        )
+    except WorkoutParserError:
+        raise
+    except OSError as error:
+        raise WorkoutFileError(f"Unable to read workout file: {path}") from error
+    except (FitParseError, ValidationError, UnicodeError, ValueError, TypeError) as error:
+        raise InvalidWorkoutError(f"Invalid workout file: {path}") from error
+
+    if not workout.instructions and not (not strict and workout.diagnostics):
+        raise InvalidWorkoutError(f"Workout contains no usable instructions: {path}")
+    return workout
 
 
 # -----------------------
@@ -82,7 +118,7 @@ def _date_from_filename(p: Path) -> date | None:
     # YYYY-MM-DD Title.ext
     try:
         return date.fromisoformat(p.stem.split(" ", 1)[0])
-    except Exception:
+    except ValueError:
         return None
 
 

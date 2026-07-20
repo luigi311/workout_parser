@@ -1,14 +1,36 @@
 from __future__ import annotations
 import base64
-from math import floor
+import binascii
 from datetime import date
-from workout_parser.models import WorkoutStep, Workout
+from math import floor
+from pathlib import Path
+from workout_parser.models import (
+    DistanceDuration,
+    OpenDuration,
+    ParseDiagnostic,
+    PointTarget,
+    RampTarget,
+    RangeTarget,
+    RepeatBlock,
+    TimeDuration,
+    Workout,
+    WorkoutStep,
+)
+from workout_parser.errors import (
+    InvalidWorkoutError,
+    UnsupportedFormatError,
+    UnsupportedWorkoutFeatureError,
+    WorkoutLimitError,
+)
+from workout_parser.limits import (
+    MAX_DECODED_BYTES,
+    MAX_NESTING_DEPTH,
+    MAX_REPETITIONS,
+    MAX_SOURCE_BYTES,
+)
+from workout_parser.metadata import normalize_sport
 
 import json
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # -----------------------
@@ -21,175 +43,466 @@ def _coerce_float(v, default: float | None = None) -> float | None:
         if v is None:
             return default
         return float(v)
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 
-def _flatten_icu_steps(steps: list[dict]) -> list[WorkoutStep]:
+def _target_from_icu(
+    metadata: object,
+    *,
+    ramp: bool,
+    integer: bool = False,
+) -> PointTarget | RangeTarget | RampTarget | None:
+    if not isinstance(metadata, dict):
+        return None
+
+    value = _coerce_float(metadata.get("value"))
+    start = _coerce_float(metadata.get("start"))
+    end = _coerce_float(metadata.get("end"))
+
+    if integer:
+        value = floor(value) if value is not None else None
+        start = floor(start) if start is not None else None
+        end = floor(end) if end is not None else None
+
+    if ramp and start is not None and end is not None:
+        return RampTarget(start=start, end=end)
+    if start is not None and end is not None:
+        if start > end:
+            raise InvalidWorkoutError(
+                f"Target range start {start} exceeds end {end}"
+            )
+        return RangeTarget(low=start, high=end)
+    if value is not None:
+        return PointTarget(value=value)
+    return None
+
+
+def _power_comparison_pairs(
+    relative: PointTarget | RangeTarget | RampTarget,
+    absolute: PointTarget | RangeTarget | RampTarget,
+) -> list[tuple[int | float, int | float]] | None:
+    if isinstance(relative, PointTarget):
+        if isinstance(absolute, PointTarget):
+            return [(relative.value, absolute.value)]
+        if isinstance(absolute, RangeTarget):
+            return [(relative.value, absolute.mid)]
+        return None
+    if isinstance(relative, RangeTarget) and isinstance(absolute, RangeTarget):
+        return [(relative.low, absolute.low), (relative.high, absolute.high)]
+    if isinstance(relative, RampTarget) and isinstance(absolute, RampTarget):
+        return [(relative.start, absolute.start), (relative.end, absolute.end)]
+    return None
+
+
+def _validate_resolved_power_targets(
+    instructions: list[WorkoutStep | RepeatBlock],
+    source_ftp_watts: int | float | None,
+    *,
+    strict: bool,
+    diagnostics: list[ParseDiagnostic],
+) -> None:
+    if source_ftp_watts is None:
+        return
+
+    def walk(
+        nested: list[WorkoutStep | RepeatBlock],
+    ):
+        for instruction in nested:
+            if isinstance(instruction, WorkoutStep):
+                yield instruction
+            else:
+                yield from walk(instruction.instructions)
+
+    for step_index, step in enumerate(walk(instructions)):
+        relative = step.power_percent_ftp
+        absolute = step.power_watts
+        if relative is None or absolute is None:
+            continue
+
+        pairs = _power_comparison_pairs(relative, absolute)
+        inconsistent = pairs is None or any(
+            abs(float(percent) * float(source_ftp_watts) / 100.0 - float(watts))
+            > 1.0
+            for percent, watts in (pairs or [])
+        )
+        if not inconsistent:
+            continue
+
+        message = (
+            f"Step {step_index} resolved watts conflict with its %FTP target "
+            f"at source FTP {source_ftp_watts} W"
+        )
+        if strict:
+            raise InvalidWorkoutError(message)
+        diagnostics.append(
+            ParseDiagnostic(
+                code="conflicting_resolved_power",
+                message=message,
+                step_index=step_index,
+            )
+        )
+
+
+def _parse_workout_date(
+    value: object,
+    *,
+    strict: bool,
+    diagnostics: list[ParseDiagnostic],
+) -> date | None:
+    if value is None:
+        return None
+    try:
+        if not isinstance(value, str):
+            raise ValueError("date must be a string")
+        return date.fromisoformat(value.split("T", 1)[0])
+    except ValueError as error:
+        message = f"Invalid workout date: {value!r}"
+        if strict:
+            raise InvalidWorkoutError(message) from error
+        diagnostics.append(ParseDiagnostic(code="invalid_date", message=message))
+        return None
+
+
+def _parse_icu_instructions(
+    steps: list[dict], *, strict: bool
+) -> tuple[list[WorkoutStep | RepeatBlock], list[ParseDiagnostic]]:
     """
     Convert Intervals.icu 'steps' (which may include nested sets with 'reps')
     into a flat list of WorkoutStep, capturing explicit bands when present.
     """
-    flat: list[WorkoutStep] = []
+    instructions: list[WorkoutStep | RepeatBlock] = []
+    diagnostics: list[ParseDiagnostic] = []
+    source_index = 0
 
-    def handle_step(node: dict, text: str | None = None):
-        # If it's a repeated block with 'reps'
-        if "reps" in node and isinstance(node.get("steps"), list):
-            reps = int(node.get("reps", 1) or 1)
-            for _ in range(max(1, reps)):
-                for sub in node["steps"]:
-                    sub_text = sub.get("text") or text
-                    handle_step(sub, text=sub_text)
-            return
+    def invalid_repeat(message: str, step_index: int) -> None:
+        diagnostic = ParseDiagnostic(
+            code="invalid_repeat",
+            message=message,
+            step_index=step_index,
+        )
+        if strict:
+            raise InvalidWorkoutError(message)
+        diagnostics.append(diagnostic)
 
-        dur = _coerce_float(node.get("duration"), 0.0) or 0.0
-        if dur <= 0:
-            return
+    def unsupported(message: str, step_index: int) -> None:
+        diagnostic = ParseDiagnostic(
+            code="unsupported_feature", message=message, step_index=step_index
+        )
+        if strict:
+            raise UnsupportedWorkoutFeatureError(message)
+        diagnostics.append(diagnostic)
 
-        # Targets we might parse
-        speed_mid = None
-        speed_lo = speed_hi = None
+    def invalid_source(message: str, step_index: int) -> None:
+        diagnostic = ParseDiagnostic(
+            code="invalid_field", message=message, step_index=step_index
+        )
+        if strict:
+            raise InvalidWorkoutError(message)
+        diagnostics.append(diagnostic)
 
-        watts_mid = None
-        watts_lo = watts_hi = None
+    def handle_step(
+        node: dict, depth: int = 0
+    ) -> WorkoutStep | RepeatBlock | None:
+        nonlocal source_index
+        step_index = source_index
+        source_index += 1
 
-        percent_watts_mid = None
-        percent_watts_lo = percent_watts_hi = None
+        # If it declares repeat structure, validate the whole block.
+        if "reps" in node or "steps" in node:
+            if depth >= MAX_NESTING_DEPTH:
+                raise WorkoutLimitError(
+                    f"Workout nesting exceeds {MAX_NESTING_DEPTH} repeat levels"
+                )
+            if not isinstance(node.get("steps"), list):
+                invalid_repeat("Repeat block must contain a steps list", step_index)
+                return None
+            repetitions = node.get("reps")
+            if (
+                not isinstance(repetitions, int)
+                or isinstance(repetitions, bool)
+                or repetitions <= 0
+            ):
+                invalid_repeat(
+                    f"Repeat count must be a positive integer, got {repetitions!r}",
+                    step_index,
+                )
+                return None
+            if repetitions > MAX_REPETITIONS:
+                raise WorkoutLimitError(
+                    f"Repeat count exceeds {MAX_REPETITIONS} at step {step_index}"
+                )
 
-        percent_speed_mid = None
-        percent_speed_lo = percent_speed_hi = None
+            nested: list[WorkoutStep | RepeatBlock] = []
+            for sub in node["steps"]:
+                if not isinstance(sub, dict):
+                    invalid_repeat(
+                        "Repeat block steps must be objects", step_index
+                    )
+                    continue
+                instruction = handle_step(sub, depth + 1)
+                if instruction is not None:
+                    nested.append(instruction)
+            if not nested:
+                invalid_repeat("Repeat block cannot be empty", step_index)
+                return None
+            return RepeatBlock(
+                name=node.get("text"),
+                repetitions=repetitions,
+                instructions=nested,
+            )
+
+        calories = _coerce_float(node.get("calories"))
+        distance = _coerce_float(node.get("distance"))
+        seconds = _coerce_float(node.get("duration"))
+        if calories is not None and calories > 0:
+            unsupported("Calorie-based durations are not supported", step_index)
+            return None
+        if node.get("until_lap_press") is True:
+            duration = OpenDuration()
+        elif distance is not None and distance > 0:
+            duration = DistanceDuration(meters=distance)
+        elif seconds is not None and seconds > 0:
+            duration = TimeDuration(seconds=seconds)
+        else:
+            unsupported(
+                "Step has no supported time, distance, or open duration", step_index
+            )
+            return None
+
+        ramp = node.get("ramp") is True
+
+        def target_from_icu(
+            metadata: object, *, integer: bool = False
+        ) -> PointTarget | RangeTarget | RampTarget | None:
+            try:
+                return _target_from_icu(
+                    metadata, ramp=ramp, integer=integer
+                )
+            except InvalidWorkoutError as error:
+                invalid_source(str(error), step_index)
+                return None
 
         # -------- Pace parsing --------
         p_abs_meta = node.get("_pace")
-        if isinstance(p_abs_meta, dict):
-            if p_abs_meta.get("value") is not None:
-                speed_mid = _coerce_float(p_abs_meta.get("value"))
-
-            s0 = _coerce_float(p_abs_meta.get("start"))
-            s1 = _coerce_float(p_abs_meta.get("end"))
-
-            if s0 is not None and s1 is not None:
-                speed_lo, speed_hi = s0, s1
+        speed_target = target_from_icu(p_abs_meta)
 
         p_per_meta = node.get("pace")
+        percent_speed_target = None
+        speed_zone = None
         if isinstance(p_per_meta, dict):
             units = (p_per_meta.get("units") or "").casefold()
             if "%pace" in units:
-                if p_per_meta.get("value") is not None:
-                    percent_speed_mid = _coerce_float(p_per_meta.get("value"))
-
-                s0 = _coerce_float(p_per_meta.get("start"))
-                s1 = _coerce_float(p_per_meta.get("end"))
-
-                if s0 is not None and s1 is not None:
-                    percent_speed_lo, percent_speed_hi = s0, s1
+                percent_speed_target = target_from_icu(p_per_meta)
+            elif "zone" in units:
+                speed_zone = target_from_icu(p_per_meta)
+            elif speed_target is None:
+                unsupported(
+                    f"Unsupported pace units: {units or 'missing'}", step_index
+                )
 
         # -------- Power parsing --------
         pw_abs_meta = node.get("_power")
-        if isinstance(pw_abs_meta, dict):
-            if pw_abs_meta.get("value") is not None:
-                watts_mid = _coerce_float(pw_abs_meta.get("value"))
-
-            w0 = _coerce_float(pw_abs_meta.get("start"))
-            w1 = _coerce_float(pw_abs_meta.get("end"))
-
-            if w0 is not None and w1 is not None:
-                watts_lo, watts_hi = w0, w1
+        power_target = target_from_icu(pw_abs_meta, integer=True)
 
         pw_per_meta = node.get("power")
-        if watts_mid is None and isinstance(pw_per_meta, dict):
+        percent_power_target = None
+        power_zone = None
+        if isinstance(pw_per_meta, dict):
             units = (pw_per_meta.get("units") or "").casefold()
             if "%power" in units or "ftp" in units:
-                if pw_per_meta.get("value") is not None:
-                    percent_watts_mid = _coerce_float(pw_per_meta.get("value"))
+                percent_power_target = target_from_icu(pw_per_meta)
+            elif "zone" in units:
+                power_zone = target_from_icu(pw_per_meta)
+            elif power_target is None:
+                unsupported(
+                    f"Unsupported power units: {units or 'missing'}", step_index
+                )
 
-                w0 = _coerce_float(pw_per_meta.get("start"))
-                w1 = _coerce_float(pw_per_meta.get("end"))
+        # -------- Heart-rate parsing --------
+        heart_rate_target = target_from_icu(node.get("_hr"))
+        heart_rate_percent_max = None
+        heart_rate_percent_lthr = None
+        heart_rate_zone = None
+        hr_meta = node.get("hr")
+        if isinstance(hr_meta, dict):
+            units = str(hr_meta.get("units") or "").casefold()
+            if "zone" in units:
+                heart_rate_zone = target_from_icu(hr_meta)
+            elif units in {"bpm", "beats/min", "beats_per_minute"}:
+                if heart_rate_target is None:
+                    heart_rate_target = target_from_icu(hr_meta)
+            elif "lthr" in units or "threshold" in units:
+                heart_rate_percent_lthr = target_from_icu(hr_meta)
+            elif "max" in units and "%" in units:
+                heart_rate_percent_max = target_from_icu(hr_meta)
+            elif heart_rate_target is None:
+                unsupported(
+                    f"Unsupported heart-rate units: {units or 'missing'}",
+                    step_index,
+                )
 
-                if w0 is not None and w1 is not None:
-                    percent_watts_lo, percent_watts_hi = w0, w1
+        # -------- Cadence parsing --------
+        cadence_target = target_from_icu(node.get("_cadence"))
+        cadence_zone = None
+        cadence_meta = node.get("cadence")
+        if isinstance(cadence_meta, dict):
+            units = str(cadence_meta.get("units") or "").casefold()
+            if "zone" in units:
+                cadence_zone = target_from_icu(cadence_meta)
+            elif "rpm" in units or units in {"cadence", ""}:
+                if cadence_target is None:
+                    cadence_target = target_from_icu(cadence_meta)
+            else:
+                unsupported(f"Unsupported cadence units: {units}", step_index)
 
         step = WorkoutStep(
-            text=text,
-            duration_s=dur,
-            watts_mid=floor(watts_mid) if watts_mid is not None else None,
-            watts_lo=floor(watts_lo) if watts_lo is not None else None,
-            watts_hi=floor(watts_hi) if watts_hi is not None else None,
-            speed_mps_mid=speed_mid,
-            speed_mps_lo=speed_lo,
-            speed_mps_hi=speed_hi,
-            percent_watts_mid=percent_watts_mid,
-            percent_watts_lo=percent_watts_lo,
-            percent_watts_hi=percent_watts_hi,
-            percent_speed_mid=percent_speed_mid,
-            percent_speed_lo=percent_speed_lo,
-            percent_speed_hi=percent_speed_hi,
+            instruction=node.get("text"),
+            duration=duration,
+            power_watts=power_target,
+            power_percent_ftp=percent_power_target,
+            power_zone=power_zone,
+            speed_mps=speed_target,
+            speed_percent_threshold=percent_speed_target,
+            speed_zone=speed_zone,
+            heart_rate_bpm=heart_rate_target,
+            heart_rate_percent_max=heart_rate_percent_max,
+            heart_rate_percent_lthr=heart_rate_percent_lthr,
+            heart_rate_zone=heart_rate_zone,
+            cadence_rpm=cadence_target,
+            cadence_zone=cadence_zone,
         )
-        flat.append(step)
+        return step
 
     for s in steps:
-        text = s.get("text")
-        handle_step(s, text=text)
-    return flat
+        if not isinstance(s, dict):
+            raise InvalidWorkoutError("Intervals.icu steps must contain objects")
+        instruction = handle_step(s)
+        if instruction is not None:
+            instructions.append(instruction)
+    return instructions, diagnostics
 
 
-def parse_intervals_icu_json(data: dict, path: Path) -> Workout:
+def parse_intervals_icu_json(
+    data: dict, path: Path, *, strict: bool = True
+) -> Workout:
     """Parse Intervals.icu exported workout JSON (running/cycling)."""
+    if not isinstance(data, dict):
+        raise InvalidWorkoutError("Intervals.icu JSON root must be an object")
 
     name = data.get("name") or path.stem
 
     # Check if the json is in the Intervals.icu API format with a base64-encoded workout file; if so, decode and parse that instead of the JSON steps
     if "workout_filename" in data and "workout_file_base64" in data:
         filename = data["workout_filename"]
+        if not isinstance(filename, str) or not filename:
+            raise InvalidWorkoutError(
+                "Intervals.icu API wrapper has an invalid workout filename"
+            )
+        encoded_payload = data["workout_file_base64"]
+        if not isinstance(encoded_payload, str):
+            raise InvalidWorkoutError(
+                "Intervals.icu API workout payload must be base64 text"
+            )
+        if len(encoded_payload) > ((MAX_DECODED_BYTES + 2) // 3) * 4:
+            raise WorkoutLimitError(
+                f"Embedded workout exceeds {MAX_DECODED_BYTES} decoded bytes"
+            )
         try:
-            decoded_bytes = base64.b64decode(data["workout_file_base64"])
-        except Exception as e:
-            raise ValueError(f"Failed to decode Intervals.icu API workout JSON: {e}")
+            decoded_bytes = base64.b64decode(encoded_payload, validate=True)
+        except (TypeError, ValueError, binascii.Error) as error:
+            raise InvalidWorkoutError(
+                "Failed to decode Intervals.icu API workout payload"
+            ) from error
+        if len(decoded_bytes) > MAX_DECODED_BYTES:
+            raise WorkoutLimitError(
+                f"Embedded workout exceeds {MAX_DECODED_BYTES} decoded bytes"
+            )
 
-        if filename.endswith(".json"):
+        embedded_suffix = Path(filename).suffix.lower()
+        if embedded_suffix == ".json":
             try:
                 decoded_data = json.loads(decoded_bytes)
-                workout = parse_intervals_icu_json(decoded_data, path)
-            except Exception as e:
-                raise ValueError(
-                    f"Failed to parse decoded Intervals.icu workout JSON: {e}"
-                )
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise InvalidWorkoutError(
+                    "Failed to parse embedded Intervals.icu workout JSON"
+                ) from error
+            workout = parse_intervals_icu_json(
+                decoded_data, Path(filename), strict=strict
+            )
 
-        elif filename.endswith(".fit"):
+        elif embedded_suffix == ".fit":
             # If its a .fit file then call the fit parser on the decoded bytes
             from workout_parser.fit import parse_fit_from_bytes
 
-            workout = parse_fit_from_bytes(decoded_bytes, name=name)
+            workout = parse_fit_from_bytes(
+                decoded_bytes,
+                name=data.get("name") or None,
+                fallback_name=Path(filename).stem,
+                strict=strict,
+            )
         else:
-            raise ValueError(
-                f"Unsupported workout file type in Intervals.icu API JSON: {filename}"
+            raise UnsupportedFormatError(
+                f"Unsupported embedded workout format: {filename}"
             )
 
-        # Parse out the name from the original JSON if available, otherwise use the filename stem
-        workout.name = data.get("name") or Path(filename).stem
-        # Parse out the description from the original JSON if available
-        workout.description = data.get("description")
-        # Parse out the workout date from the original JSON if available
-        workout_date_str = data.get("start_date_local")
-        if workout_date_str:
-            try:
-                # Parse out the date from 2026-04-07T08:00:00
-                workout.workout_date = date.fromisoformat(
-                    workout_date_str.split("T")[0]
-                )
-            except Exception:
-                pass  # Ignore date parsing errors and leave workout_date as None
-        return workout
+        updates = {}
+        if data.get("name"):
+            updates["name"] = data["name"]
+        if data.get("description") is not None:
+            updates["description"] = data["description"]
+        wrapper_sport = normalize_sport(data.get("type") or data.get("sport"))
+        if wrapper_sport is not None:
+            updates["sport"] = wrapper_sport
+        diagnostics = list(workout.diagnostics)
+        if data.get("start_date_local") is not None:
+            wrapper_date = _parse_workout_date(
+                data["start_date_local"],
+                strict=strict,
+                diagnostics=diagnostics,
+            )
+            if wrapper_date is not None:
+                updates["workout_date"] = wrapper_date
+        updates["diagnostics"] = tuple(diagnostics)
+        return workout.model_copy(update=updates, deep=True)
 
     steps_in = data.get("steps") or []
-    steps = _flatten_icu_steps(steps_in)
+    if not isinstance(steps_in, list):
+        raise InvalidWorkoutError("Intervals.icu steps must be a list")
+    instructions, diagnostics = _parse_icu_instructions(steps_in, strict=strict)
+    source_ftp_watts = _coerce_float(data.get("ftp"))
+    _validate_resolved_power_targets(
+        instructions,
+        source_ftp_watts,
+        strict=strict,
+        diagnostics=diagnostics,
+    )
 
-    return Workout(name=name, steps=steps)
+    workout = Workout(
+        name=name,
+        description=data.get("description"),
+        workout_date=_parse_workout_date(
+            data.get("start_date_local"),
+            strict=strict,
+            diagnostics=diagnostics,
+        ),
+        sport=normalize_sport(data.get("type") or data.get("sport")),
+        source_ftp_watts=source_ftp_watts,
+        instructions=instructions,
+        diagnostics=diagnostics,
+    )
+    if not workout.instructions and not (not strict and workout.diagnostics):
+        raise InvalidWorkoutError("Workout contains no usable instructions")
+    return workout
 
 
-def parse_intervals_icu_json_file(path: Path) -> Workout:
+def parse_intervals_icu_json_file(path: Path, *, strict: bool = True) -> Workout:
     """Parse Intervals.icu exported workout JSON (running/cycling)."""
+    if path.stat().st_size > MAX_SOURCE_BYTES:
+        raise WorkoutLimitError(
+            f"Workout source exceeds {MAX_SOURCE_BYTES} bytes: {path}"
+        )
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
-    return parse_intervals_icu_json(data, path)
+    return parse_intervals_icu_json(data, path, strict=strict)

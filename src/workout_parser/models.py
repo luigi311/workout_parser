@@ -1,154 +1,245 @@
-from math import floor
+from __future__ import annotations
+
+from collections.abc import Iterator
 from datetime import date
+from math import floor, isfinite
+from typing import Annotated
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+from workout_parser.errors import WorkoutLimitError
+from workout_parser.limits import (
+    MAX_EXPANDED_STEPS,
+    MAX_NESTING_DEPTH,
+    MAX_REPETITIONS,
+    MAX_TIMED_DURATION_SECONDS,
+)
 
 
-class WorkoutStep(BaseModel):
-    text: str | None = None
+FiniteNonNegative = Annotated[
+    int | float, Field(ge=0, allow_inf_nan=False)
+]
+FinitePositive = Annotated[int | float, Field(gt=0, allow_inf_nan=False)]
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
-    duration_s: float
 
-    # Absolute targets
+class _ImmutableModel(BaseModel):
+    model_config = ConfigDict(frozen=True)
 
-    # Power targets
-    watts_mid: int | None = None
-    watts_lo: int | None = None
-    watts_hi: int | None = None
 
-    # Pace targets
-    speed_mps_mid: float | None = None
-    speed_mps_lo: float | None = None
-    speed_mps_hi: float | None = None
+class PointTarget(_ImmutableModel):
+    value: FiniteNonNegative
 
-    # Percent targets
 
-    # Power targets as %FTP
-    percent_watts_mid: float | None = None
-    percent_watts_lo: float | None = None
-    percent_watts_hi: float | None = None
-
-    percent_speed_mid: float | None = None
-    percent_speed_lo: float | None = None
-    percent_speed_hi: float | None = None
-
-    model_config = {"frozen": False}
-
-    # --- Non-canonical pace targets for UI purposes ---
-    @property
-    def speed_kph_mid(self) -> float | None:
-        return self.speed_mps_mid * 3.6 if self.speed_mps_mid is not None else None
-
-    @property
-    def speed_kph_lo(self) -> float | None:
-        return self.speed_mps_lo * 3.6 if self.speed_mps_lo is not None else None
-
-    @property
-    def speed_kph_hi(self) -> float | None:
-        return self.speed_mps_hi * 3.6 if self.speed_mps_hi is not None else None
-
-    @property
-    def speed_mph_mid(self) -> float | None:
-        return self.speed_mps_mid * 2.23694 if self.speed_mps_mid is not None else None
-
-    @property
-    def speed_mph_lo(self) -> float | None:
-        return self.speed_mps_lo * 2.23694 if self.speed_mps_lo is not None else None
-
-    @property
-    def speed_mph_hi(self) -> float | None:
-        return self.speed_mps_hi * 2.23694 if self.speed_mps_hi is not None else None
-
-    # --- Compute bands w/ fallbacks for gauge UI ---
-    def _generate_bands(self) -> "WorkoutStep":
-        # For watts use floor to round down to nearest integer (since watts are typically integers and this avoids weird fractional watt targets)
-        if self.watts_mid is not None and (
-            self.watts_lo is None or self.watts_hi is None
-        ):
-            mid_val = self.watts_mid
-            self.watts_lo = (
-                floor(mid_val * 0.95) if self.watts_lo is None else self.watts_lo
-            )
-            self.watts_hi = (
-                floor(mid_val * 1.05) if self.watts_hi is None else self.watts_hi
-            )
-        elif (
-            self.watts_lo is not None
-            and self.watts_hi is not None
-            and self.watts_mid is None
-        ):
-            self.watts_mid = floor(0.5 * (self.watts_lo + self.watts_hi))
-
-        # For pace targets use regular float math for the bands
-        for attr in ["percent_speed", "speed_mps", "percent_watts"]:
-            mid_val = getattr(self, f"{attr}_mid")
-            lo_val = getattr(self, f"{attr}_lo")
-            hi_val = getattr(self, f"{attr}_hi")
-
-            if mid_val is not None and (lo_val is None or hi_val is None):
-                setattr(self, f"{attr}_lo", mid_val * 0.95)
-                setattr(self, f"{attr}_hi", mid_val * 1.05)
-            elif lo_val is not None and hi_val is not None and mid_val is None:
-                setattr(self, f"{attr}_mid", 0.5 * (lo_val + hi_val))
-
-        return self
+class RangeTarget(_ImmutableModel):
+    low: FiniteNonNegative
+    high: FiniteNonNegative
 
     @model_validator(mode="after")
-    def _on_init(self) -> "WorkoutStep":
-        self._generate_bands()
+    def validate_order(self) -> "RangeTarget":
+        if self.low > self.high:
+            raise ValueError("range low must not exceed high")
         return self
 
-    def generate_absolute_power_targets_from_percent(self, ftp_watts: int) -> None:
-        """Generate absolute power targets from %FTP."""
-        if self.percent_watts_mid is not None:
-            self.watts_mid = floor(
-                float(ftp_watts) * float(self.percent_watts_mid) / 100.0
-            )
-        if self.percent_watts_lo is not None:
-            self.watts_lo = floor(
-                float(ftp_watts) * float(self.percent_watts_lo) / 100.0
-            )
-        if self.percent_watts_hi is not None:
-            self.watts_hi = floor(
-                float(ftp_watts) * float(self.percent_watts_hi) / 100.0
-            )
-
-        self._generate_bands()
-
-    def generate_pace_targets_from_percent(self, threshold_speed_mps: float) -> None:
-        """Generate absolute pace targets from threshold meters per second pace."""
-        if self.percent_speed_mid is not None:
-            self.speed_mps_mid = (
-                float(threshold_speed_mps) * float(self.percent_speed_mid) / 100.0
-            )
-        if self.percent_speed_lo is not None:
-            self.speed_mps_lo = (
-                float(threshold_speed_mps) * float(self.percent_speed_lo) / 100.0
-            )
-        if self.percent_speed_hi is not None:
-            self.speed_mps_hi = (
-                float(threshold_speed_mps) * float(self.percent_speed_hi) / 100.0
-            )
-
-        self._generate_bands()
+    @property
+    def mid(self) -> float:
+        return (self.low + self.high) / 2
 
 
-class Workout(BaseModel):
+class RampTarget(_ImmutableModel):
+    start: FiniteNonNegative
+    end: FiniteNonNegative
+
+
+class TimeDuration(_ImmutableModel):
+    seconds: FinitePositive
+
+
+class DistanceDuration(_ImmutableModel):
+    meters: FinitePositive
+
+
+class OpenDuration(_ImmutableModel):
+    event: NonEmptyString = "lap_button"
+
+
+class ParseDiagnostic(_ImmutableModel):
+    code: str
+    message: str
+    step_index: int | None = None
+
+
+def _scale_target(
+    target: PointTarget | RangeTarget | RampTarget,
+    factor: float,
+    *,
+    integer: bool,
+) -> PointTarget | RangeTarget | RampTarget:
+    def scale(value: int | float) -> int | float:
+        scaled = value * factor
+        return floor(scaled) if integer else scaled
+
+    if isinstance(target, PointTarget):
+        return PointTarget(value=scale(target.value))
+    if isinstance(target, RangeTarget):
+        return RangeTarget(
+            low=scale(target.low),
+            high=scale(target.high),
+        )
+    return RampTarget(start=scale(target.start), end=scale(target.end))
+
+
+class WorkoutStep(_ImmutableModel):
+    name: str | None = None
+    instruction: str | None = None
+    notes: str | None = None
+    duration: TimeDuration | DistanceDuration | OpenDuration
+
+    power_watts: PointTarget | RangeTarget | RampTarget | None = None
+    power_percent_ftp: PointTarget | RangeTarget | RampTarget | None = None
+    power_zone: PointTarget | RangeTarget | RampTarget | None = None
+    speed_mps: PointTarget | RangeTarget | RampTarget | None = None
+    speed_percent_threshold: PointTarget | RangeTarget | RampTarget | None = None
+    speed_zone: PointTarget | RangeTarget | RampTarget | None = None
+    heart_rate_bpm: PointTarget | RangeTarget | RampTarget | None = None
+    heart_rate_percent_max: PointTarget | RangeTarget | RampTarget | None = None
+    heart_rate_percent_lthr: PointTarget | RangeTarget | RampTarget | None = None
+    heart_rate_zone: PointTarget | RangeTarget | RampTarget | None = None
+    cadence_rpm: PointTarget | RangeTarget | RampTarget | None = None
+    cadence_zone: PointTarget | RangeTarget | RampTarget | None = None
+
+    @property
+    def duration_s(self) -> float | None:
+        if isinstance(self.duration, TimeDuration):
+            return self.duration.seconds
+        return None
+
+    def resolve_power_targets(self, ftp_watts: int | float) -> "WorkoutStep":
+        """Return a copy resolved against an externally supplied FTP."""
+        if not isfinite(float(ftp_watts)) or ftp_watts <= 0:
+            raise ValueError("ftp_watts must be finite and greater than zero")
+        power_watts = self.power_watts
+        if self.power_percent_ftp is not None:
+            power_watts = _scale_target(
+                self.power_percent_ftp,
+                float(ftp_watts) / 100.0,
+                integer=True,
+            )
+        return self.model_copy(update={"power_watts": power_watts}, deep=True)
+
+    def resolve_pace_targets(
+        self, threshold_speed_mps: int | float
+    ) -> "WorkoutStep":
+        """Return a copy resolved against an externally supplied threshold pace."""
+        if not isfinite(float(threshold_speed_mps)) or threshold_speed_mps <= 0:
+            raise ValueError(
+                "threshold_speed_mps must be finite and greater than zero"
+            )
+        speed_mps = self.speed_mps
+        if self.speed_percent_threshold is not None:
+            speed_mps = _scale_target(
+                self.speed_percent_threshold,
+                float(threshold_speed_mps) / 100.0,
+                integer=False,
+            )
+        return self.model_copy(update={"speed_mps": speed_mps}, deep=True)
+
+
+class RepeatBlock(_ImmutableModel):
+    name: str | None = None
+    instruction: str | None = None
+    notes: str | None = None
+    repetitions: int = Field(gt=0, strict=True)
+    instructions: tuple[WorkoutStep | RepeatBlock, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_repetition_budget(self) -> "RepeatBlock":
+        if self.repetitions > MAX_REPETITIONS:
+            raise WorkoutLimitError(
+                f"Repeat count exceeds {MAX_REPETITIONS}"
+            )
+        return self
+
+
+class Workout(_ImmutableModel):
     name: str
     description: str | None = None
     workout_date: date | None = None
+    sport: str | None = None
+    source_ftp_watts: FinitePositive | None = None
+    diagnostics: tuple[ParseDiagnostic, ...] = ()
 
-    steps: list[WorkoutStep] = Field(default_factory=list)
+    instructions: tuple[WorkoutStep | RepeatBlock, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_resource_budget(self) -> "Workout":
+        expanded_steps = 0
+        timed_seconds = 0.0
+        stack = [(instruction, 1, 0) for instruction in self.instructions]
+        while stack:
+            instruction, multiplier, depth = stack.pop()
+            if isinstance(instruction, RepeatBlock):
+                nested_depth = depth + 1
+                if nested_depth > MAX_NESTING_DEPTH:
+                    raise WorkoutLimitError(
+                        f"Workout nesting exceeds {MAX_NESTING_DEPTH} repeat levels"
+                    )
+                nested_multiplier = multiplier * instruction.repetitions
+                stack.extend(
+                    (nested, nested_multiplier, nested_depth)
+                    for nested in instruction.instructions
+                )
+                continue
+
+            expanded_steps += multiplier
+            if expanded_steps > MAX_EXPANDED_STEPS:
+                raise WorkoutLimitError(
+                    f"Workout expands beyond {MAX_EXPANDED_STEPS} steps"
+                )
+            if isinstance(instruction.duration, TimeDuration):
+                timed_seconds += instruction.duration.seconds * multiplier
+                if timed_seconds > MAX_TIMED_DURATION_SECONDS:
+                    raise WorkoutLimitError(
+                        "Workout timed duration exceeds 7 days"
+                    )
+        return self
+
+    def _iter_steps(self) -> Iterator[WorkoutStep]:
+        def walk(
+            instructions: tuple[WorkoutStep | RepeatBlock, ...],
+        ) -> Iterator[WorkoutStep]:
+            for instruction in instructions:
+                if isinstance(instruction, WorkoutStep):
+                    yield instruction
+                else:
+                    for _ in range(instruction.repetitions):
+                        yield from walk(instruction.instructions)
+
+        yield from walk(self.instructions)
+
+    def expanded_steps(self) -> list[WorkoutStep]:
+        """Materialize the instruction tree as independent executable steps."""
+        return [step.model_copy(deep=True) for step in self._iter_steps()]
 
     @property
-    def total_seconds(self) -> float:
-        return sum(s.duration_s for s in self.steps)
+    def total_seconds(self) -> float | None:
+        total = 0.0
+        for step in self._iter_steps():
+            if step.duration_s is None:
+                return None
+            total += step.duration_s
+        return total
 
     def get_step_at(self, t_s: float) -> tuple[int | None, WorkoutStep | None]:
         """Returns the WorkoutStep active at time t_s into the workout."""
+        if not isfinite(float(t_s)) or t_s < 0:
+            raise ValueError("t_s must be finite and non-negative")
         elapsed = 0.0
-        for idx, step in enumerate(self.steps):
-            if elapsed <= t_s < elapsed + step.duration_s:
+        for idx, step in enumerate(self._iter_steps()):
+            duration_s = step.duration_s
+            if duration_s is None:
+                return (None, None)
+            if elapsed <= t_s < elapsed + duration_s:
                 return (idx, step)
-            elapsed += step.duration_s
+            elapsed += duration_s
         return (None, None)
