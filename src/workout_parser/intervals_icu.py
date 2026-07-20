@@ -68,6 +68,10 @@ def _target_from_icu(
     if ramp and start is not None and end is not None:
         return RampTarget(start=start, end=end)
     if start is not None and end is not None:
+        if start > end:
+            raise InvalidWorkoutError(
+                f"Target range start {start} exceeds end {end}"
+            )
         return RangeTarget(low=start, high=end)
     if value is not None:
         return PointTarget(value=value)
@@ -189,6 +193,14 @@ def _parse_icu_instructions(
             raise UnsupportedWorkoutFeatureError(message)
         diagnostics.append(diagnostic)
 
+    def invalid_source(message: str, step_index: int) -> None:
+        diagnostic = ParseDiagnostic(
+            code="invalid_field", message=message, step_index=step_index
+        )
+        if strict:
+            raise InvalidWorkoutError(message)
+        diagnostics.append(diagnostic)
+
     def handle_step(
         node: dict, depth: int = 0
     ) -> WorkoutStep | RepeatBlock | None:
@@ -260,9 +272,20 @@ def _parse_icu_instructions(
 
         ramp = node.get("ramp") is True
 
+        def target_from_icu(
+            metadata: object, *, integer: bool = False
+        ) -> PointTarget | RangeTarget | RampTarget | None:
+            try:
+                return _target_from_icu(
+                    metadata, ramp=ramp, integer=integer
+                )
+            except InvalidWorkoutError as error:
+                invalid_source(str(error), step_index)
+                return None
+
         # -------- Pace parsing --------
         p_abs_meta = node.get("_pace")
-        speed_target = _target_from_icu(p_abs_meta, ramp=ramp)
+        speed_target = target_from_icu(p_abs_meta)
 
         p_per_meta = node.get("pace")
         percent_speed_target = None
@@ -270,9 +293,9 @@ def _parse_icu_instructions(
         if isinstance(p_per_meta, dict):
             units = (p_per_meta.get("units") or "").casefold()
             if "%pace" in units:
-                percent_speed_target = _target_from_icu(p_per_meta, ramp=ramp)
+                percent_speed_target = target_from_icu(p_per_meta)
             elif "zone" in units:
-                speed_zone = _target_from_icu(p_per_meta, ramp=ramp)
+                speed_zone = target_from_icu(p_per_meta)
             elif speed_target is None:
                 unsupported(
                     f"Unsupported pace units: {units or 'missing'}", step_index
@@ -280,7 +303,7 @@ def _parse_icu_instructions(
 
         # -------- Power parsing --------
         pw_abs_meta = node.get("_power")
-        power_target = _target_from_icu(pw_abs_meta, ramp=ramp, integer=True)
+        power_target = target_from_icu(pw_abs_meta, integer=True)
 
         pw_per_meta = node.get("power")
         percent_power_target = None
@@ -288,16 +311,16 @@ def _parse_icu_instructions(
         if isinstance(pw_per_meta, dict):
             units = (pw_per_meta.get("units") or "").casefold()
             if "%power" in units or "ftp" in units:
-                percent_power_target = _target_from_icu(pw_per_meta, ramp=ramp)
+                percent_power_target = target_from_icu(pw_per_meta)
             elif "zone" in units:
-                power_zone = _target_from_icu(pw_per_meta, ramp=ramp)
+                power_zone = target_from_icu(pw_per_meta)
             elif power_target is None:
                 unsupported(
                     f"Unsupported power units: {units or 'missing'}", step_index
                 )
 
         # -------- Heart-rate parsing --------
-        heart_rate_target = _target_from_icu(node.get("_hr"), ramp=ramp)
+        heart_rate_target = target_from_icu(node.get("_hr"))
         heart_rate_percent_max = None
         heart_rate_percent_lthr = None
         heart_rate_zone = None
@@ -305,14 +328,14 @@ def _parse_icu_instructions(
         if isinstance(hr_meta, dict):
             units = str(hr_meta.get("units") or "").casefold()
             if "zone" in units:
-                heart_rate_zone = _target_from_icu(hr_meta, ramp=ramp)
+                heart_rate_zone = target_from_icu(hr_meta)
             elif units in {"bpm", "beats/min", "beats_per_minute"}:
                 if heart_rate_target is None:
-                    heart_rate_target = _target_from_icu(hr_meta, ramp=ramp)
+                    heart_rate_target = target_from_icu(hr_meta)
             elif "lthr" in units or "threshold" in units:
-                heart_rate_percent_lthr = _target_from_icu(hr_meta, ramp=ramp)
+                heart_rate_percent_lthr = target_from_icu(hr_meta)
             elif "max" in units and "%" in units:
-                heart_rate_percent_max = _target_from_icu(hr_meta, ramp=ramp)
+                heart_rate_percent_max = target_from_icu(hr_meta)
             elif heart_rate_target is None:
                 unsupported(
                     f"Unsupported heart-rate units: {units or 'missing'}",
@@ -320,16 +343,16 @@ def _parse_icu_instructions(
                 )
 
         # -------- Cadence parsing --------
-        cadence_target = _target_from_icu(node.get("_cadence"), ramp=ramp)
+        cadence_target = target_from_icu(node.get("_cadence"))
         cadence_zone = None
         cadence_meta = node.get("cadence")
         if isinstance(cadence_meta, dict):
             units = str(cadence_meta.get("units") or "").casefold()
             if "zone" in units:
-                cadence_zone = _target_from_icu(cadence_meta, ramp=ramp)
+                cadence_zone = target_from_icu(cadence_meta)
             elif "rpm" in units or units in {"cadence", ""}:
                 if cadence_target is None:
-                    cadence_target = _target_from_icu(cadence_meta, ramp=ramp)
+                    cadence_target = target_from_icu(cadence_meta)
             else:
                 unsupported(f"Unsupported cadence units: {units}", step_index)
 

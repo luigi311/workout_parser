@@ -95,7 +95,7 @@ def _dump_workout(workout: Workout, json_out: bool = False) -> str:
             lines.append(
                 f"    Speed:    {_format_target(step.speed_mps, decimals=2, suffix=' m/s')}"
             )
-        elif step.speed_percent_threshold is not None:
+        if step.speed_percent_threshold is not None:
             lines.append(
                 "    %Pace:    "
                 + _format_target(

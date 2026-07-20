@@ -1,3 +1,5 @@
+from itertools import pairwise
+
 from workout_parser.errors import (
     InvalidWorkoutError,
     UnsupportedWorkoutFeatureError,
@@ -434,7 +436,7 @@ def parse_fit(
         )
         contiguous = contiguous and all(
             int(right["start"]) == int(left["end"]) + 1
-            for left, right in zip(block_records, block_records[1:])
+            for left, right in pairwise(block_records)
         )
         if not contiguous:
             invalid_repeat(

@@ -176,7 +176,7 @@ def test_parsers_agree_on_shared_canonical_fields(case: FixtureCase) -> None:
     assert _close(w_a.total_seconds, w_b.total_seconds, 1.0)
     assert w_a.diagnostics == w_b.diagnostics
 
-    for i, (sa, sb) in enumerate(zip(steps_a, steps_b)):
+    for i, (sa, sb) in enumerate(zip(steps_a, steps_b, strict=True)):
         assert type(sa.duration) is type(sb.duration), f"Step {i} duration kind"
         assert _close(sa.duration_s, sb.duration_s, 0.5), f"Step {i} duration"
         for field in SHARED_TARGET_FIELDS:
@@ -231,7 +231,7 @@ def test_intervals_json() -> None:
     assert len(steps_a) == 4, f"Expected 4 steps, got {len(steps_a)}"
     assert _close(w_a.total_seconds, 75 * 60, 1.0), f"Expected total duration of 75 minutes, got {w_a.total_seconds / 60:.2f} minutes"
 
-    for i, (sa, sb) in enumerate(zip(steps_a, steps_b)):
+    for i, (sa, sb) in enumerate(zip(steps_a, steps_b, strict=True)):
         assert _close(sa.duration_s, sb.duration_s, 0.5), f"Step {i} duration: {sa.duration_s} vs {sb.duration_s}"
         assert _close(_target_mid(sa.power_watts), _target_mid(sb.power_watts), 1.0)
         assert _close(_target_mid(sa.speed_mps), _target_mid(sb.speed_mps), 0.01)
