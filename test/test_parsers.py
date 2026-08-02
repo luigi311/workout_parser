@@ -380,6 +380,40 @@ def test_fit_decodes_typed_duration_and_target_fields() -> None:
     assert steps[2].cadence_rpm == RangeTarget(low=85, high=95)
 
 
+@pytest.mark.parametrize("intensity", [4, "recovery"])
+def test_fit_decodes_zero_watt_recovery_target(intensity) -> None:
+    workout = parse_fit(
+        _FitFile(
+            _FitMessage(
+                message_index=0,
+                duration_type="time",
+                duration_time=90,
+                intensity=intensity,
+                target_type="power",
+                target_power_zone=0,
+                custom_target_power_low=1000,
+                custom_target_power_high=1000,
+            ),
+            _FitMessage(
+                message_index=1,
+                duration_type="time",
+                duration_time=60,
+                intensity=5,
+                target_type="power",
+                target_power_zone=0,
+                custom_target_power_low=1000,
+                custom_target_power_high=1000,
+            ),
+        )
+    )
+    recovery, non_recovery = workout.expanded_steps()
+
+    assert recovery.power_watts == RangeTarget(low=0, high=0)
+    assert recovery.power_percent_ftp is None
+    assert non_recovery.power_watts is None
+    assert non_recovery.power_percent_ftp == RangeTarget(low=1000, high=1000)
+
+
 def test_json_preserves_relative_and_resolved_power() -> None:
     workout = parse_intervals_icu_json(
         {

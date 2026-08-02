@@ -27,6 +27,16 @@ from fitparse import FitFile, FitParseError
 from pydantic import ValidationError
 
 
+def _is_recovery_intensity(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value == 4
+    if isinstance(value, str):
+        return value.strip().casefold() == "recovery"
+    return False
+
+
 def _coerce_float(v, default: float | None = None) -> float | None:
     try:
         if v is None:
@@ -272,6 +282,7 @@ def parse_fit(
             continue
 
         tgt_type = str(fields.get("target_type") or "").lower()
+        is_recovery = _is_recovery_intensity(fields.get("intensity"))
 
         power_watts = power_percent_ftp = power_zone = None
         speed_mps = speed_zone = None
@@ -314,7 +325,9 @@ def parse_fit(
                 )
                 if bounds is not None:
                     low, high = bounds
-                    if low <= 1000 and high <= 1000:
+                    if low == high == 1000 and is_recovery:
+                        power_watts = RangeTarget(low=0, high=0)
+                    elif low <= 1000 and high <= 1000:
                         power_percent_ftp = RangeTarget(low=low, high=high)
                     elif low > 1000 and high > 1000:
                         power_watts = RangeTarget(low=low - 1000, high=high - 1000)
